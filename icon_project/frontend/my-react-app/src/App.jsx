@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import IconExplorer from './IconExplorer';
-import IconExplorerJ from './IconExplorer_J';
-import IconExplorerSeo from './IconExplorer_seo';
-import TestPage from './test-page';
+import Explore from './Explore';
+import Archive from './Archive';
+import Home from './Home';
+import TestPage from './TestPage';
+import { Archive as ArchiveIcon, Home as HomeIcon } from 'lucide-react';
 
 function App() {
   // 현재 활성화된 페이지 ('home', 'explore', 'archive', 'settings')
@@ -15,15 +16,15 @@ function App() {
 
   // 현재 페이지 렌더링
   if (activePage === 'home') {
-    return <IconExplorerSeo onNavigate={handleNavigate} />;
+    return <Home onNavigate={handleNavigate} />;
   }
   
   if (activePage === 'explore') {
-    return <IconExplorer onNavigate={handleNavigate} />;
+    return <Explore onNavigate={handleNavigate} />;
   }
   
   if (activePage === 'archive') {
-    return <IconExplorerJ onNavigate={handleNavigate} />;
+    return <Archive onNavigate={handleNavigate} />;
   }
 
   if (activePage === 'settings') {
@@ -31,7 +32,7 @@ function App() {
   }
 
   // 기본값: 탐색 페이지
-  return <IconExplorer onNavigate={handleNavigate} />;
+  return <Explore onNavigate={handleNavigate} />;
 }
 
 export default App;

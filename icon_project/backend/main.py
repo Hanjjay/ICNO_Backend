@@ -2,6 +2,7 @@
 import subprocess
 import os
 import sys
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -34,17 +35,25 @@ async def calculate(request: CalcRequest):
 @app.post("/api/launch-launcher")
 async def launch_launcher():
     try:
-        # 런처 파일 경로 설정 (main.py와 같은 위치에 있다고 가정)
-        script_path = os.path.join(os.path.dirname(__file__), "desktop_launcher.py")
+        # 프로젝트 루트 경로 찾기 (backend의 부모 디렉토리)
+        backend_dir = Path(__file__).parent
+        project_root = backend_dir.parent
         
-        if not os.path.exists(script_path):
-            raise HTTPException(status_code=404, detail="런처 파일을 찾을 수 없습니다.")
+        # 런처 파일 경로: icon_project/engine/icno_changer_luncher.py
+        script_path = project_root / "engine" / "icno_changer_luncher.py"
+        
+        if not script_path.exists():
+            raise HTTPException(
+                status_code=404, 
+                detail=f"런처 파일을 찾을 수 없습니다: {script_path}"
+            )
 
         # 새로운 프로세스로 파이썬 스크립트 실행 (비차단 방식)
-        # creationflags=subprocess.CREATE_NEW_CONSOLE 는 윈도우에서 새로운 창으로 실행하게 함
+        # cwd를 engine 폴더로 설정하여 상대 경로가 올바르게 작동하도록 함
         subprocess.Popen(
-            [sys.executable, script_path], 
-            creationflags=subprocess.CREATE_NEW_CONSOLE
+            [sys.executable, str(script_path)],
+            cwd=str(script_path.parent),  # engine/ 폴더를 작업 디렉토리로 설정
+            creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
         )
         return {"status": "success", "message": "런처가 성공적으로 실행되었습니다."}
     except Exception as e:
