@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import Explore from './Explore';
 import Archive from './Archive';
-import Home from './Home';
+import Home from './IncHome';
 import TestPage from './TestPage';
 import { Archive as ArchiveIcon, Home as HomeIcon } from 'lucide-react';
 
 function App() {
-  // 현재 활성화된 페이지 ('home', 'explore', 'archive', 'settings')
+  // 현재 활성화된 페이지 ('home', 'explore', 'archive', 'test', 'settings')
   const [activePage, setActivePage] = useState('explore');
 
   // 페이지 전환 함수
@@ -25,6 +25,10 @@ function App() {
   
   if (activePage === 'archive') {
     return <Archive onNavigate={handleNavigate} />;
+  }
+
+  if (activePage === 'test') {
+    return <TestPage onNavigate={handleNavigate} />;
   }
 
   if (activePage === 'settings') {

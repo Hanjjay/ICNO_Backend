@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Home, Compass, Archive, Code, Settings, User, Play, Monitor } from 'lucide-react';
+import { Home, Compass, Archive, Code, Settings, User, Play, Monitor, Menu, ChevronLeft } from 'lucide-react';
 
-export default function TestPage() {
+export default function TestPage({ onNavigate }) {
   const [activeMenu, setActiveMenu] = useState('test');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // --- [상태 관리: 계산기 및 런처] ---
   const [calcExpression, setCalcExpression] = useState("");
@@ -57,27 +58,87 @@ export default function TestPage() {
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans antialiased">
-      {/* 사이드바 */}
-      <aside className="w-72 bg-white border-r border-slate-200 flex flex-col shadow-sm">
-        <div className="p-6 border-b border-slate-100">
-          <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-            <Archive className="text-blue-600" /> 통합 대시보드
-          </h1>
+      <style>{`
+        .sidebar-item {
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          position: relative;
+        }
+
+        .sidebar-item::before {
+          content: '';
+          position: absolute;
+          left: 0;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 3px;
+          height: 0;
+          background: linear-gradient(180deg, #ec4899, #f97316);
+          border-radius: 0 2px 2px 0;
+          transition: height 0.3s ease;
+        }
+
+        .sidebar-item:hover::before,
+        .sidebar-item.active::before {
+          height: 70%;
+        }
+
+        .sidebar-item:hover {
+          background: linear-gradient(90deg, rgba(236,72,153,0.08), transparent);
+          transform: translateX(4px);
+        }
+      `}</style>
+      {/* Sidebar */}
+      <div className={`${sidebarOpen ? 'w-64' : 'w-[52px]'} bg-white/80 backdrop-blur-md border-r border-slate-200/60 flex flex-col shadow-xl transition-all duration-300 overflow-hidden flex-shrink-0`}>
+        <div className="p-3 border-b border-slate-200/60 flex items-center gap-3">
+          {sidebarOpen && (
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="w-10 h-10 bg-gradient-to-br from-pink-500 to-orange-500 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
+                <User className="w-5 h-5 text-white" />
+              </div>
+              <span className="font-semibold text-slate-800 text-lg truncate">아이콘...</span>
+            </div>
+          )}
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-2 hover:bg-slate-100 rounded-lg transition-colors flex-shrink-0"
+            title={sidebarOpen ? "사이드바 닫기" : "사이드바 열기"}
+          >
+            {sidebarOpen
+              ? <ChevronLeft className="w-5 h-5 text-slate-600" />
+              : <Menu className="w-5 h-5 text-slate-600" />
+            }
+          </button>
         </div>
-        <nav className="p-4 space-y-1">
-          {[{ id: 'home', icon: Home, label: '홈' }, { id: 'test', icon: Code, label: '테스트' }].map(item => (
-            <button
-              key={item.id}
-              onClick={() => setActiveMenu(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-                activeMenu === item.id ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <item.icon size={20} /> <span>{item.label}</span>
-            </button>
-          ))}
+
+        <nav className="flex-1 p-2">
+          <div className="space-y-1">
+            {[
+              { id: 'home', icon: Home, label: '홈' },
+              { id: 'explore', icon: Compass, label: '탐색' },
+              { id: 'archive', icon: Archive, label: '보관함' },
+              { id: 'settings', icon: Settings, label: '설정' },
+              { id: 'test', icon: Code, label: '테스트 페이지' },
+            ].map(item => (
+              <div
+                key={item.id}
+                onClick={() => {
+                  if (item.id !== 'settings') {
+                    onNavigate && onNavigate(item.id);
+                  }
+                }}
+                className={`sidebar-item flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer ${
+                  item.id === 'test'
+                    ? 'active text-slate-900 bg-gradient-to-r from-pink-50 to-transparent font-semibold'
+                    : 'text-slate-700 hover:text-slate-900 font-medium'
+                }`}
+              >
+                <item.icon className="w-5 h-5 flex-shrink-0" />
+                {sidebarOpen && <span className="truncate">{item.label}</span>}
+              </div>
+            ))}
+          </div>
         </nav>
-      </aside>
+      </div>
 
       {/* 메인 콘텐츠 */}
       <main className="flex-1 overflow-y-auto p-10">

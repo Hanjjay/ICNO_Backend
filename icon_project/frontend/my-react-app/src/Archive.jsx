@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Home, Compass, Archive, Search, X, ArrowLeft, Filter, Plus, Edit2, Check, Download, Share2, ThumbsUp, Star } from 'lucide-react';
+import { Home, Compass, Archive, Search, X, ArrowLeft, Filter, Plus, Edit2, Check, Download, Share2, ThumbsUp, Star, Settings, User, Code, Menu, ChevronLeft } from 'lucide-react';
 
 // 샘플 보관함 아이템
 const initialArchiveItems = [
@@ -393,6 +393,7 @@ const initialArchiveItems = [
 
 export default function ArchiveUI({ onNavigate }) {
   const [activeMenu, setActiveMenu] = useState('archive');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBoard, setSelectedBoard] = useState(null);
   const [archiveItems, setArchiveItems] = useState(initialArchiveItems);
@@ -545,67 +546,111 @@ export default function ArchiveUI({ onNavigate }) {
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-slate-50 to-slate-100 font-sans antialiased">
-      {/* 왼쪽 사이드바 */}
-      <aside className="w-72 bg-white/80 backdrop-blur-xl border-r border-slate-200/60 flex flex-col shadow-xl">
-        {/* 헤더 */}
-        <div className="p-6 border-b border-slate-100">
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-500 rounded-xl shadow-lg">
-              <Archive className="w-6 h-6 text-white" />
+      <style>{`
+        .sidebar-item {
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          position: relative;
+        }
+
+        .sidebar-item::before {
+          content: '';
+          position: absolute;
+          left: 0;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 3px;
+          height: 0;
+          background: linear-gradient(180deg, #ec4899, #f97316);
+          border-radius: 0 2px 2px 0;
+          transition: height 0.3s ease;
+        }
+
+        .sidebar-item:hover::before,
+        .sidebar-item.active::before {
+          height: 70%;
+        }
+
+        .sidebar-item:hover {
+          background: linear-gradient(90deg, rgba(236,72,153,0.08), transparent);
+          transform: translateX(4px);
+        }
+      `}</style>
+
+      {/* Sidebar */}
+      <div className={`${sidebarOpen ? 'w-64' : 'w-[52px]'} bg-white/80 backdrop-blur-md border-r border-slate-200/60 flex flex-col shadow-xl transition-all duration-300 overflow-hidden flex-shrink-0`}>
+        <div className="p-3 border-b border-slate-200/60 flex items-center gap-3">
+          {sidebarOpen && (
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="w-10 h-10 bg-gradient-to-br from-pink-500 to-orange-500 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
+                <User className="w-5 h-5 text-white" />
+              </div>
+              <span className="font-semibold text-slate-800 text-lg truncate">아이콘...</span>
             </div>
-            보관함
-          </h1>
+          )}
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-2 hover:bg-slate-100 rounded-lg transition-colors flex-shrink-0"
+            title={sidebarOpen ? "사이드바 닫기" : "사이드바 열기"}
+          >
+            {sidebarOpen
+              ? <ChevronLeft className="w-5 h-5 text-slate-600" />
+              : <Menu className="w-5 h-5 text-slate-600" />
+            }
+          </button>
         </div>
 
-        {/* 탐색하기 섹션 */}
-        <div className="p-5">
-          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">
-            탐색하기
-          </h3>
-          <nav className="space-y-2">
+        <nav className="flex-1 p-2">
+          <div className="space-y-1">
             {[
-              { id: 'home', icon: Home, label: '홈', gradient: 'from-blue-500 to-cyan-500' },
-              { id: 'explore', icon: Compass, label: '탐색', gradient: 'from-purple-500 to-pink-500' },
-              { id: 'archive', icon: Archive, label: '보관함', gradient: 'from-orange-500 to-red-500' }
+              { id: 'home', icon: Home, label: '홈' },
+              { id: 'explore', icon: Compass, label: '탐색' },
+              { id: 'archive', icon: Archive, label: '보관함' },
+              { id: 'settings', icon: Settings, label: '설정' },
+              { id: 'test', icon: Code, label: '테스트 페이지' },
             ].map(item => (
-              <button
+              <div
                 key={item.id}
                 onClick={() => {
-                  setActiveMenu(item.id);
-                  if (onNavigate) {
-                    onNavigate(item.id);
+                  if (item.id !== 'settings') {
+                    onNavigate && onNavigate(item.id);
                   }
                 }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 transform ${
-                  activeMenu === item.id
-                    ? 'bg-gradient-to-r ' + item.gradient + ' text-white shadow-lg scale-105 font-semibold'
-                    : 'text-slate-600 hover:bg-slate-50 hover:scale-102 hover:shadow-md'
+                className={`sidebar-item flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer ${
+                  item.id === 'archive'
+                    ? 'active text-slate-900 bg-gradient-to-r from-pink-50 to-transparent font-semibold'
+                    : 'text-slate-700 hover:text-slate-900 font-medium'
                 }`}
               >
-                <item.icon className="w-5 h-5" />
-                <span>{item.label}</span>
-              </button>
+                <item.icon className="w-5 h-5 flex-shrink-0" />
+                {sidebarOpen && <span className="truncate">{item.label}</span>}
+              </div>
             ))}
-          </nav>
-        </div>
-
-        {/* 통계 정보 */}
-        <div className="p-5 mt-auto border-t border-slate-100">
-          <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl p-4 border border-blue-100">
-            <div className="text-sm text-slate-600 mb-2">전체 보관함</div>
-            <div className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-              {archiveItems.length}
-            </div>
-            <div className="text-xs text-slate-500 mt-1">컬렉션</div>
           </div>
-        </div>
-      </aside>
+        </nav>
+      </div>
 
       {/* 메인 콘텐츠 영역 */}
       <main className="flex-1 overflow-y-auto">
         {!selectedBoard ? (
           /* 그리드 뷰 */
           <div className="max-w-[1600px] mx-auto px-10 py-8">
+            {/* 상단 헤더 - 제목과 통계 */}
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h1 className="text-3xl font-bold text-slate-900 mb-2">보관함</h1>
+                <p className="text-slate-600">저장한 이미지 보드를 관리하세요</p>
+              </div>
+              
+              {/* 보드 수 통계 박스 */}
+              <div className="bg-gradient-to-br from-pink-500 to-orange-500 rounded-2xl p-6 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105">
+                <div className="text-white/80 text-sm font-medium mb-1">전체 보드</div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-bold text-white">{archiveItems.length}</span>
+                  <span className="text-white/80 text-lg font-medium">개</span>
+                </div>
+              </div>
+            </div>
+
             {/* 상단 검색 영역 */}
             <div className="mb-8">
               <div className="flex gap-3 max-w-2xl relative">
