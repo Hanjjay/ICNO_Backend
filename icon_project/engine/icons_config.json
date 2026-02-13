@@ -1,0 +1,32 @@
+{
+    "Claude.lnk": {
+        "image_path": "resourse/dun.png",
+        "program_path": "C:\\Users\\33549\\AppData\\Local\\AnthropicClaude\\claude.exe",
+        "pos_x": 10,
+        "pos_y": 10
+    },
+    "GitHub Desktop.lnk": {
+        "image_path": "resourse/dun.png",
+        "program_path": "C:\\Users\\33549\\AppData\\Local\\GitHubDesktop\\GitHubDesktop.exe",
+        "pos_x": 120,
+        "pos_y": 10
+    },
+    "terrible": {
+        "image_path": "resourse/dun.png",
+        "program_path": "C:\\Users\\33549\\OneDrive\\바탕 화면\\terrible",
+        "pos_x": 230,
+        "pos_y": 10
+    },
+    "testingcode": {
+        "image_path": "resourse/dun.png",
+        "program_path": "C:\\Users\\33549\\OneDrive\\바탕 화면\\testingcode",
+        "pos_x": 340,
+        "pos_y": 10
+    },
+    "평화로운것들": {
+        "image_path": "resourse/dun.png",
+        "program_path": "C:\\Users\\33549\\OneDrive\\바탕 화면\\평화로운것들",
+        "pos_x": 450,
+        "pos_y": 10
+    }
+}

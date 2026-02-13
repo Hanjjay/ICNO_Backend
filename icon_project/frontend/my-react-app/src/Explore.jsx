@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Search, Filter, List, Grid3x3, Calendar, MoreVertical, Home, Compass, Archive, Settings, User, X, Download, Share2, ThumbsUp, Star, Tag, Layers, TrendingUp, Clock, Award, Download as DownloadIcon, ChevronDown, History } from 'lucide-react';
+import { Search, Filter, List, Grid3x3, Calendar, MoreVertical, Home, Compass, Archive, Settings, User, X, Download, Share2, ThumbsUp, Star, Tag, Layers, TrendingUp, Clock, Award, Download as DownloadIcon, ChevronDown, History, Code, Menu, ChevronLeft } from 'lucide-react';
 
-const IconExplorer = () => {
+const IconExplorer = ({ onNavigate }) => {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [viewMode, setViewMode] = useState('grid');
   const [selectedIcon, setSelectedIcon] = useState(null);
   const [userRating, setUserRating] = useState(0);
@@ -741,34 +742,54 @@ const IconExplorer = () => {
       `}</style>
 
       {/* Sidebar */}
-      <div className="w-64 bg-white/80 backdrop-blur-md border-r border-slate-200/60 flex flex-col shadow-xl">
-        <div className="p-6 border-b border-slate-200/60">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-pink-500 to-orange-500 rounded-xl flex items-center justify-center shadow-lg">
-              <User className="w-5 h-5 text-white" />
+      <div className={`${sidebarOpen ? 'w-64' : 'w-[52px]'} bg-white/80 backdrop-blur-md border-r border-slate-200/60 flex flex-col shadow-xl transition-all duration-300 overflow-hidden flex-shrink-0`}>
+        <div className="p-3 border-b border-slate-200/60 flex items-center gap-3">
+          {sidebarOpen && (
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="w-10 h-10 bg-gradient-to-br from-pink-500 to-orange-500 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
+                <User className="w-5 h-5 text-white" />
+              </div>
+              <span className="font-semibold text-slate-800 text-lg truncate">아이콘...</span>
             </div>
-            <span className="font-semibold text-slate-800 text-lg">아이콘...</span>
-          </div>
+          )}
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-2 hover:bg-slate-100 rounded-lg transition-colors flex-shrink-0"
+            title={sidebarOpen ? "사이드바 닫기" : "사이드바 열기"}
+          >
+            {sidebarOpen
+              ? <ChevronLeft className="w-5 h-5 text-slate-600" />
+              : <Menu className="w-5 h-5 text-slate-600" />
+            }
+          </button>
         </div>
 
-        <nav className="flex-1 p-4">
+        <nav className="flex-1 p-2">
           <div className="space-y-1">
-            <div className="sidebar-item flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer text-slate-700 hover:text-slate-900">
-              <Home className="w-5 h-5" />
-              <span className="font-medium">홈</span>
-            </div>
-            <div className="sidebar-item active flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer text-slate-900 bg-gradient-to-r from-pink-50 to-transparent">
-              <Compass className="w-5 h-5" />
-              <span className="font-semibold">탐색</span>
-            </div>
-            <div className="sidebar-item flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer text-slate-700 hover:text-slate-900">
-              <Archive className="w-5 h-5" />
-              <span className="font-medium">보관함</span>
-            </div>
-            <div className="sidebar-item flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer text-slate-700 hover:text-slate-900">
-              <Settings className="w-5 h-5" />
-              <span className="font-medium">설정</span>
-            </div>
+            {[
+              { id: 'home', icon: Home, label: '홈' },
+              { id: 'explore', icon: Compass, label: '탐색' },
+              { id: 'archive', icon: Archive, label: '보관함' },
+              { id: 'settings', icon: Settings, label: '설정' },
+              { id: 'test', icon: Code, label: '테스트 페이지' },
+            ].map(item => (
+              <div
+                key={item.id}
+                onClick={() => {
+                  if (item.id !== 'settings') {
+                    onNavigate && onNavigate(item.id);
+                  }
+                }}
+                className={`sidebar-item flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer ${
+                  item.id === 'explore'
+                    ? 'active text-slate-900 bg-gradient-to-r from-pink-50 to-transparent font-semibold'
+                    : 'text-slate-700 hover:text-slate-900 font-medium'
+                }`}
+              >
+                <item.icon className="w-5 h-5 flex-shrink-0" />
+                {sidebarOpen && <span className="truncate">{item.label}</span>}
+              </div>
+            ))}
           </div>
         </nav>
       </div>
