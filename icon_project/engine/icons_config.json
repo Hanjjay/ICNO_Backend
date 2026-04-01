@@ -1,32 +1,54 @@
-{
-    "Claude.lnk": {
-        "image_path": "resourse/dun.png",
-        "program_path": "C:\\Users\\33549\\AppData\\Local\\AnthropicClaude\\claude.exe",
-        "pos_x": 10,
-        "pos_y": 10
-    },
-    "GitHub Desktop.lnk": {
-        "image_path": "resourse/dun.png",
-        "program_path": "C:\\Users\\33549\\AppData\\Local\\GitHubDesktop\\GitHubDesktop.exe",
-        "pos_x": 120,
-        "pos_y": 10
-    },
-    "terrible": {
-        "image_path": "resourse/dun.png",
-        "program_path": "C:\\Users\\33549\\OneDrive\\바탕 화면\\terrible",
-        "pos_x": 230,
-        "pos_y": 10
-    },
-    "testingcode": {
-        "image_path": "resourse/dun.png",
-        "program_path": "C:\\Users\\33549\\OneDrive\\바탕 화면\\testingcode",
-        "pos_x": 340,
-        "pos_y": 10
-    },
-    "평화로운것들": {
-        "image_path": "resourse/dun.png",
-        "program_path": "C:\\Users\\33549\\OneDrive\\바탕 화면\\평화로운것들",
-        "pos_x": 450,
-        "pos_y": 10
-    }
-}
+[
+  {
+    "id": "8b89cf15-cf65-4a4b-9846-6b76013f5ae0",
+    "name": "Perplexity",
+    "image_path": "C:\\Users\\서승린\\Documents\\GitHub\\inco\\icon_project\\engine\\custom_icons\\2e464d17_syberian-hamster.jpg",
+    "target_path": "C:\\Users\\서승린\\AppData\\Local\\Programs\\Perplexity\\Perplexity.exe",
+    "x": 715,
+    "y": 466,
+    "size": 80,
+    "show_name": true
+  },
+  {
+    "id": "676cbf3b-e146-499a-a0d1-8928bc6f06b9",
+    "name": "노션",
+    "image_path": "C:\\Users\\서승린\\Documents\\GitHub\\inco\\icon_project\\engine\\custom_icons\\d83b3708_다운로드.png",
+    "target_path": "C:\\Users\\서승린\\AppData\\Local\\Programs\\Notion\\Notion.exe",
+    "x": 26,
+    "y": 215,
+    "size": 80,
+    "show_name": true
+  },
+  {
+    "id": "cc3d109f-0804-4682-ac67-6d703b6b1d70",
+    "name": "내 PC",
+    "image_path": "C:\\Users\\서승린\\Documents\\GitHub\\inco\\icon_project\\engine\\custom_icons\\3bad2c78_source.gif",
+    "target_path": "C:\\Users\\서승린\\Desktop\\내 PC.lnk",
+    "x": 159,
+    "y": 209,
+    "size": 80,
+    "show_name": true,
+    "font_family": "맑은 고딕",
+    "font_size": 14,
+    "font_bold": true,
+    "font_italic": false,
+    "font_color": "#ff6b9d",
+    "outline_color": "#00d2d3"
+  },
+  {
+    "id": "001de81a-87f5-4159-9c4b-368e8a1108d2",
+    "name": "2026 개총 테이블 구조_최종.xlsx",
+    "image_path": "C:\\Users\\서승린\\Documents\\GitHub\\inco\\icon_project\\engine\\custom_icons\\2e464d17_syberian-hamster.jpg",
+    "target_path": "C:\\Users\\서승린\\Desktop\\2026 개총 테이블 구조_최종.xlsx",
+    "x": 589,
+    "y": 472,
+    "size": 80,
+    "show_name": false,
+    "font_family": "바탕",
+    "font_size": 10,
+    "font_bold": false,
+    "font_italic": false,
+    "font_color": "#00d2d3",
+    "outline_color": "#000000"
+  }
+]

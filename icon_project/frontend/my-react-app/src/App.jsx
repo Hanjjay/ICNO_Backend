@@ -3,18 +3,17 @@ import Explore from './Explore';
 import Archive from './Archive';
 import Home from './IncHome';
 import TestPage from './TestPage';
+// import IconChanger from './IconChanger';  ← 이 줄 삭제 또는 주석 처리
+import ApplyWindow from './ApplyWindow';  // 이것만 있으면 됨!
 import { Archive as ArchiveIcon, Home as HomeIcon } from 'lucide-react';
 
 function App() {
-  // 현재 활성화된 페이지 ('home', 'explore', 'archive', 'test', 'settings')
   const [activePage, setActivePage] = useState('explore');
 
-  // 페이지 전환 함수
   const handleNavigate = (page) => {
     setActivePage(page);
   };
 
-  // 현재 페이지 렌더링
   if (activePage === 'home') {
     return <Home onNavigate={handleNavigate} />;
   }
@@ -31,11 +30,20 @@ function App() {
     return <TestPage onNavigate={handleNavigate} />;
   }
 
+  // IconChanger 페이지 제거 또는 주석 처리
+  // if (activePage === 'icon-changer') {
+  //   return <IconChanger onNavigate={handleNavigate} />;
+  // }
+
+  // 적용창 (이것만 있으면 됨!)
+  if (activePage === 'apply-window') {
+    return <ApplyWindow onNavigate={handleNavigate} />;
+  }
+
   if (activePage === 'settings') {
     return <TestPage onNavigate={handleNavigate} />;
   }
 
-  // 기본값: 탐색 페이지
   return <Explore onNavigate={handleNavigate} />;
 }
 
