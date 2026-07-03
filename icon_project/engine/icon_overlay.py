@@ -6,6 +6,16 @@
 """
 
 import ctypes, json, sys, os, threading
+
+# ── DPI 인식 선언 (반드시 Qt 초기화 전에 호출) ──────────────
+# Per-Monitor DPI Aware v2: 150% 배율 환경에서 아이콘 재배치 방지
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -72,9 +82,10 @@ def _apply_colorkey(hwnd):
 
 
 def _win32_move(hwnd, x, y):
+    """Win32 SetWindowPos - DPI-aware 앱이므로 논리좌표 그대로 전달"""
     try:
         ctypes.windll.user32.SetWindowPos(
-            hwnd, None, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010)
+            hwnd, None, int(x), int(y), 0, 0, 0x0001 | 0x0004 | 0x0010)
     except: pass
 
 
@@ -167,24 +178,21 @@ class CustomIcon(QWidget):
         self.img_w = self._icon_size
         self.img_h = self._icon_size
 
-        self.setWindowFlags(Qt.WindowStaysOnBottomHint | Qt.FramelessWindowHint |
+        self.setWindowFlags(Qt.FramelessWindowHint |
                             Qt.Tool | Qt.WindowDoesNotAcceptFocus)
-        self.setAttribute(Qt.WA_NoSystemBackground)
-        self.setAttribute(Qt.WA_OpaquePaintEvent)
+        self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
 
         self.img_label = QLabel(self)
-        self.img_label.setStyleSheet(f"background-color: {BG_CSS}; border: none;")
+        self.img_label.setStyleSheet("background: transparent; border: none;")
 
         self._load_image()
         self._calc_size()
 
         self.move(icon_data['x'], icon_data['y'])
         self.show()
-        _apply_colorkey(int(self.winId()))
-
         if self.gif_frames:
             QTimer.singleShot(150, self._start_gif)
         print(f"  ✓ [{icon_data.get('name')}] {self.width()}x{self.height()}")
@@ -240,7 +248,11 @@ class CustomIcon(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        p.fillRect(self.rect(), BG_COLOR)
+        p.setRenderHint(QPainter.Antialiasing)
+        # 투명 배경 (WA_TranslucentBackground)
+        p.setCompositionMode(QPainter.CompositionMode_Clear)
+        p.fillRect(self.rect(), Qt.transparent)
+        p.setCompositionMode(QPainter.CompositionMode_SourceOver)
         if self.cur_frame and not self.cur_frame.isNull():
             p.drawPixmap((self.width()-self.img_w)//2, 0, self.cur_frame)
         if self.show_name:
@@ -267,12 +279,14 @@ class CustomIcon(QWidget):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
+            # self.pos()는 Qt 논리좌표, globalPosition()도 Qt 논리좌표 → 일관성 유지
             self.drag_start = e.globalPosition().toPoint() - self.pos()
 
     def mouseMoveEvent(self, e):
         if e.buttons() == Qt.LeftButton and self.drag_start:
             p = e.globalPosition().toPoint() - self.drag_start
-            _win32_move(int(self.winId()), p.x(), p.y())
+            # Qt move() → self.pos() 동기화 유지 (다음 드래그 시 튕김 방지)
+            self.move(p)
             self.icon_data['x'] = p.x()
             self.icon_data['y'] = p.y()
 
@@ -360,15 +374,33 @@ class IconOverlay(QWidget):
 
         self.load_config()
         self.setup_tray()
+
+        # ── config mtime 폴링 (IPC 실패 시 fallback, 500ms마다 확인) ──
+        self._config_mtime = CONFIG_PATH.stat().st_mtime if CONFIG_PATH.exists() else 0
+        self._poll = QTimer(self)
+        self._poll.timeout.connect(self._poll_config)
+        self._poll.start(500)
+
         print(f"\n✅ 오버레이 준비 완료 (IPC 포트 {CTRL_PORT})\n")
 
     def _full_reload(self):
-        print("  전체 재로드 실행...")
+        # JSON에서 새 설정 미리 읽어서 로그
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                new_list = json.load(f)
+            sizes = [d.get('size', 80) for d in new_list]
+            print(f"  🔄 전체 재로드: {len(new_list)}개 아이콘, sizes={sizes}")
+        except Exception as e:
+            print(f"  🔄 전체 재로드 (읽기 오류: {e})")
+
         for i in self.icons: i._gif_active = False; i.close()
         self.icons.clear()
         self.settings = _load_settings()
         self.load_config()
-        print("  전체 재로드 완료")
+        # 재로드 후 mtime 갱신 (중복 트리거 방지)
+        if CONFIG_PATH.exists():
+            self._config_mtime = CONFIG_PATH.stat().st_mtime
+        print(f"  ✅ 재로드 완료: {len(self.icons)}개 표시")
 
     def _reposition_icons(self):
         print("  위치 재배치 실행...")
@@ -408,6 +440,9 @@ class IconOverlay(QWidget):
         try:
             with open(CONFIG_PATH,'w',encoding='utf-8') as f:
                 json.dump([i.icon_data for i in self.icons], f, ensure_ascii=False, indent=2)
+            # 자체 저장 후 mtime 갱신 (폴링 재로드 방지)
+            if CONFIG_PATH.exists():
+                self._config_mtime = CONFIG_PATH.stat().st_mtime
         finally:
             self._saving = False
 
@@ -428,9 +463,26 @@ class IconOverlay(QWidget):
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.show()
 
+    def _poll_config(self):
+        """mtime 폴링: IPC 실패해도 JSON 변경 감지해서 재로드"""
+        if not CONFIG_PATH.exists():
+            return
+        try:
+            mtime = CONFIG_PATH.stat().st_mtime
+            if mtime != self._config_mtime:
+                old_mtime = self._config_mtime
+                self._config_mtime = mtime  # 먼저 갱신 (중복 방지)
+                if self._saving:
+                    return  # 자체 저장 무시
+                print(f"  📂 mtime 변경 감지 ({old_mtime:.1f} → {mtime:.1f}) → 재로드")
+                self._full_reload()
+        except Exception as e:
+            print(f"  폴링 오류: {e}")
+
     def quit_app(self):
         try: PID_PATH.unlink(missing_ok=True)
         except: pass
+        self._poll.stop()
         for i in self.icons: i.close()
         QApplication.quit()
 

@@ -26,6 +26,10 @@ function EditModal({ mapping, images, onClose, onUpdated, isActive }) {
   );
   const [uploading,    setUploading]    = useState(false);
   const [iconName,     setIconName]     = useState(mapping.name ?? "");
+  const [iconSize,     setIconSize]     = useState(mapping.size ?? 80);
+  const [useHover,     setUseHover]     = useState(!!(mapping.hover_image_path));
+  const [hoverImg,     setHoverImg]     = useState(
+    images.find(i => i.path === mapping.hover_image_path) ?? null);
   const [showName,     setShowName]     = useState(mapping.show_name ?? true);
   const [fontFamily,   setFontFamily]   = useState(mapping.font_family ?? "맑은 고딕");
   const [fontSize,     setFontSize]     = useState(mapping.font_size ?? 10);
@@ -63,7 +67,9 @@ function EditModal({ mapping, images, onClose, onUpdated, isActive }) {
           name:          iconName,
           image_path:    selectedImg?.path ?? mapping.image_path,
           target_path:   mapping.target_path ?? "",
-          show_name:     showName,
+          size:              Math.min(512, Math.max(40, iconSize || 80)),
+          hover_image_path:  hoverImg?.path ?? "",
+          show_name:         showName,
           font_family:   fontFamily,
           font_size:     fontSize,
           font_bold:     fontBold,
@@ -72,7 +78,7 @@ function EditModal({ mapping, images, onClose, onUpdated, isActive }) {
           outline_color: outlineColor,
         }),
       });
-      onUpdated();
+      await onUpdated();   // 데이터 갱신 완료 후 닫기
       onClose();
     } finally { setSaving(false); }
   }
@@ -129,6 +135,25 @@ function EditModal({ mapping, images, onClose, onUpdated, isActive }) {
                     <img src={`${API}${img.url}`} className="w-full h-full object-cover" />
                   </button>
                 ))}
+              </div>
+            </div>
+
+            {/* 아이콘 크기 */}
+            <div>
+              <label className="text-white/60 text-xs mb-1 block">
+                아이콘 크기: <span className="text-white font-bold">{iconSize}px</span>
+              </label>
+              <div className="flex items-center gap-3">
+                <span className="text-white/30 text-xs">40</span>
+                <input type="range" min={40} max={512} value={iconSize}
+                  onChange={e => setIconSize(+e.target.value)}
+                  className="flex-1 accent-indigo-400 h-1.5" />
+                <span className="text-white/30 text-xs">512</span>
+                <input type="number" min={40} max={512} value={iconSize}
+                  onChange={e => setIconSize(+e.target.value || 40)}
+                  onBlur={e => setIconSize(Math.min(512, Math.max(40, +e.target.value || 40)))}
+                  className="w-14 bg-white/5 border border-white/10 rounded-lg px-2 py-1
+                             text-white text-xs text-center outline-none focus:border-indigo-400" />
               </div>
             </div>
 
@@ -207,8 +232,10 @@ function EditModal({ mapping, images, onClose, onUpdated, isActive }) {
                             rounded-xl border border-white/10">
               {selectedImg
                 ? <img src={`${API}${selectedImg.url}`}
-                       className="w-14 h-14 object-contain rounded-lg" />
-                : <div className="w-14 h-14 rounded-lg bg-white/10" />}
+                       style={{ width: Math.min(iconSize, 200), height: Math.min(iconSize, 200), objectFit: 'contain' }}
+                       className="rounded-lg" />
+                : <div style={{ width: Math.min(iconSize, 200), height: Math.min(iconSize, 200) }}
+                       className="rounded-lg bg-white/10" />}
               {showName && (
                 <span style={{
                   fontFamily, fontSize: fontSize + "pt",
@@ -256,19 +283,21 @@ function CreateModal({ desktopIcons, images, onClose, onCreated, isActive }) {
   const [fontItalic,   setFontItalic]   = useState(false);
   const [fontColor,    setFontColor]    = useState("#ffffff");
   const [outlineColor, setOutlineColor] = useState("#000000");
+  const [iconSize,     setIconSize]     = useState(80);
+  const [useHover,     setUseHover]     = useState(false);
+  const [hoverImg,     setHoverImg]     = useState(null);
   const [showName,     setShowName]     = useState(true);
   const [iconName,     setIconName]     = useState("");
   const [saving,       setSaving]       = useState(false);
-  const fileRef = useRef();
-  const imgRef  = useRef();
+  const fileRef  = useRef();
+  const imgRef   = useRef();
+  const hoverRef = useRef();
 
   const targetName = customFile
     ? customFile.name.replace(/\.[^.]+$/, "")
     : selectedIcon?.name ?? "";
 
-  useEffect(() => {
-    if (!iconName && targetName) setIconName(targetName);
-  }, [targetName]);
+  // iconName은 클릭 시 직접 설정 (useEffect 대신)
 
   // 이미지 업로드
   async function uploadImage(file) {
@@ -303,7 +332,9 @@ function CreateModal({ desktopIcons, images, onClose, onCreated, isActive }) {
           image_path:    selectedImg.path,
           target_path:   customFile ? customFile._path ?? "" : (selectedIcon?.target_path ?? ""),
           x: 100, y: 100,
-          show_name:     showName,
+          size:              Math.min(512, Math.max(40, iconSize || 80)),
+          hover_image_path:  hoverImg?.path ?? "",
+          show_name:         showName,
           font_family:   fontFamily,
           font_size:     fontSize,
           font_bold:     fontBold,
@@ -313,12 +344,7 @@ function CreateModal({ desktopIcons, images, onClose, onCreated, isActive }) {
         }),
       });
 
-      // ★ 오버레이가 켜진 상태면 재시작해서 새 폰트 설정 즉시 반영
-      if (isActive) {
-        await api("/api/icons/reload-overlay", { method: "POST" });
-      }
-
-      onCreated();
+      await onCreated();   // 데이터 갱신 완료 후 닫기
       onClose();
     } finally {
       setSaving(false);
@@ -334,9 +360,10 @@ function CreateModal({ desktopIcons, images, onClose, onCreated, isActive }) {
                     bg-[#1e1f2e] rounded-xl border border-white/10 min-w-[120px]">
       {selectedImg
         ? <img src={`${API}${selectedImg.url}`}
-               className="w-16 h-16 object-contain rounded-lg" />
-        : <div className="w-16 h-16 rounded-lg bg-white/10 flex items-center
-                          justify-center text-white/30 text-2xl">?</div>}
+               style={{ width: iconSize, height: iconSize, objectFit: 'contain' }}
+               className="rounded-lg" />
+        : <div style={{ width: iconSize, height: iconSize }}
+               className="rounded-lg bg-white/10 flex items-center justify-center text-white/30 text-2xl">?</div>}
       {showName && (
         <span style={{
           fontFamily, fontSize: fontSize + "pt",
@@ -397,7 +424,14 @@ function CreateModal({ desktopIcons, images, onClose, onCreated, isActive }) {
 
               {/* 직접 파일 선택 버튼 */}
               <button
-                onClick={() => fileRef.current.click()}
+                onClick={async () => {
+                  const res = await api("/api/icons/pick-file");
+                  if (res.file_path) {
+                    setCustomFile({ name: res.name, _path: res.file_path });
+                    setSelectedIcon(null);
+                    setIconName(res.name);
+                  }
+                }}
                 className={`w-full py-3 rounded-xl border-2 border-dashed text-sm
                   font-medium transition-all
                   ${customFile
@@ -405,18 +439,17 @@ function CreateModal({ desktopIcons, images, onClose, onCreated, isActive }) {
                     : "border-white/20 text-white/50 hover:border-indigo-400 hover:text-white"}`}>
                 {customFile ? `✅ ${customFile.name}` : "📂 파일 직접 선택 (exe, lnk 등)"}
               </button>
-              <input ref={fileRef} type="file" className="hidden"
-                onChange={e => {
-                  const f = e.target.files[0];
-                  if (f) { setCustomFile(f); setSelectedIcon(null); }
-                }} />
 
               {/* 바탕화면 아이콘 그리드 */}
               <p className="text-white/40 text-xs pt-2">또는 바탕화면 아이콘 선택:</p>
               <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-1">
                 {desktopIcons.map(icon => (
                   <button key={icon.path}
-                    onClick={() => { setSelectedIcon(icon); setCustomFile(null); }}
+                    onClick={() => {
+                    setSelectedIcon(icon);
+                    setCustomFile(null);
+                    setIconName(icon.name);   // 선택 바꾸면 이름도 즉시 반영
+                  }}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-xl
                       text-left text-sm transition-all
                       ${selectedIcon?.path === icon.path
@@ -469,6 +502,67 @@ function CreateModal({ desktopIcons, images, onClose, onCreated, isActive }) {
                   </div>
                 )}
               </div>
+
+              {/* 반응형 아이콘 (호버 이미지) 토글 */}
+              <div className="border-t border-white/10 pt-4">
+                <label className="flex items-center gap-3 cursor-pointer mb-3">
+                  <div onClick={() => { setUseHover(v => !v); if (useHover) setHoverImg(null); }}
+                    className={`w-11 h-6 rounded-full transition-all relative
+                      ${useHover ? "bg-indigo-500" : "bg-white/20"}`}>
+                    <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all
+                      ${useHover ? "left-5" : "left-0.5"}`} />
+                  </div>
+                  <div>
+                    <span className="text-white/80 text-sm font-medium">반응형 아이콘</span>
+                    <span className="text-white/30 text-xs ml-2">마우스 올리면 다른 이미지 표시</span>
+                  </div>
+                </label>
+
+                {useHover && (<>
+                  <p className="text-white/50 text-xs mb-2">호버 이미지 선택 (GIF 가능)</p>
+                  <div className="flex gap-2 mb-2">
+                    <button disabled={uploading}
+                      onClick={() => hoverRef.current.click()}
+                      className="px-3 py-1.5 bg-indigo-500/30 hover:bg-indigo-500/50
+                                 text-indigo-300 text-xs rounded-lg transition-all">
+                      📁 호버 이미지 업로드
+                    </button>
+                    <input ref={hoverRef} type="file" accept=".png,.jpg,.jpeg,.gif"
+                      className="hidden" onChange={async e => {
+                        if (!e.target.files[0]) return;
+                        const fd = new FormData();
+                        fd.append("file", e.target.files[0]);
+                        const res = await fetch(`${API}/api/icons/upload`, { method:"POST", body:fd });
+                        const data = await res.json();
+                        if (data.success) {
+                          const r = await api("/api/icons/images");
+                          const found = (r.images??[]).find(i => i.filename === data.filename);
+                          if (found) setHoverImg(found);
+                        }
+                      }} />
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 max-h-36 overflow-y-auto">
+                    {imgList.map(img => (
+                      <button key={img.filename} onClick={() => setHoverImg(img)}
+                        className={`relative rounded-xl overflow-hidden aspect-square border-2 transition-all
+                          ${hoverImg?.filename === img.filename
+                            ? "border-indigo-400 ring-2 ring-indigo-400/40"
+                            : "border-transparent hover:border-white/30"}`}>
+                        <img src={`${API}${img.url}`} className="w-full h-full object-cover" />
+                        {img.filename.toLowerCase().endsWith('.gif') && (
+                          <span className="absolute top-1 right-1 bg-black/60 text-white
+                                           text-[9px] px-1 rounded">GIF</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  {hoverImg && (
+                    <p className="text-indigo-300 text-xs mt-2">
+                      ✅ 호버: {hoverImg.filename}
+                    </p>
+                  )}
+                </>)}
+              </div>
             </>)}
 
             {/* STEP 3: 텍스트 스타일 */}
@@ -481,6 +575,25 @@ function CreateModal({ desktopIcons, images, onClose, onCreated, isActive }) {
                              px-4 py-2.5 text-white text-sm outline-none
                              focus:border-indigo-400 transition-all"
                   placeholder="이름을 입력하세요" />
+              </div>
+
+              {/* 아이콘 크기 */}
+              <div>
+                <label className="text-white/60 text-xs mb-1 block">
+                  아이콘 크기: <span className="text-white font-bold">{iconSize}px</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <span className="text-white/30 text-xs">40</span>
+                  <input type="range" min={40} max={512} value={iconSize}
+                    onChange={e => setIconSize(+e.target.value)}
+                    className="flex-1 accent-indigo-400 h-1.5" />
+                  <span className="text-white/30 text-xs">512</span>
+                  <input type="number" min={40} max={512} value={iconSize}
+                    onChange={e => setIconSize(+e.target.value || 40)}
+                    onBlur={e => setIconSize(Math.min(512, Math.max(40, +e.target.value || 40)))}
+                    className="w-14 bg-white/5 border border-white/10 rounded-lg px-2 py-1
+                               text-white text-xs text-center outline-none focus:border-indigo-400" />
+                </div>
               </div>
 
               {/* 이름 표시 토글 */}
@@ -673,7 +786,6 @@ export default function ApplyWindow() {
       body: JSON.stringify({ mode, grid_cell_w: cw, grid_cell_h: ch, grid_cols: 0 }),
     });
     // 오버레이가 켜진 상태면 재시작해서 모드 즉시 반영
-    if (isActive) await api("/api/icons/reload-overlay", { method: "POST" });
   }
 
   async function handleArrangeGrid() {
@@ -715,7 +827,6 @@ export default function ApplyWindow() {
 
   async function deleteMapping(id, name) {
     await api(`/api/icons/mapping/${id}`, { method: "DELETE" });
-    if (isActive) await api("/api/icons/reload-overlay", { method: "POST" });
     setStatus({ msg: `'${name}' 삭제 완료`, type: "warn" });
     loadAll();
   }

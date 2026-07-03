@@ -1,4 +1,15 @@
 # backend/main.py - 완전 수정 버전
+
+# ── DPI 인식 선언 (Windows 아이콘 배치 보호) ─────────────────
+import ctypes as _ctypes
+try:
+    _ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-Monitor DPI Aware v2
+except Exception:
+    try:
+        _ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
 import subprocess
 import os
 import sys
@@ -317,9 +328,11 @@ async def launch_launcher():
 class IconMapping(BaseModel):
     icon_name: str
     image_path: str
+    hover_image_path: str = ""
     target_path: str = ""
     x: int = 100
     y: int = 100
+    size: int = 80
     show_name: bool = True
     font_family:   str  = "Segoe UI"
     font_size:     int  = 9
@@ -335,13 +348,27 @@ async def get_desktop_icons():
     try:
         import win32com.client
         
-        desktop = Path.home() / "Desktop"
+        # 개인 바탕화면 + 공용 바탕화면 둘 다 읽기
+        public_folder = os.environ.get('PUBLIC', r'C:\Users\Public')
+        desktops = [
+            Path.home() / "Desktop",
+            Path(public_folder) / "Desktop",
+        ]
         icons = []
+        seen = set()   # 중복 방지
         
-        if desktop.exists():
+        all_items = []
+        for desktop in desktops:
+            if desktop.exists():
+                for item in desktop.iterdir():
+                    if item.name not in seen:
+                        seen.add(item.name)
+                        all_items.append(item)
+        
+        if all_items:
             shell = win32com.client.Dispatch("WScript.Shell")
             
-            for idx, item in enumerate(sorted(desktop.iterdir())):
+            for idx, item in enumerate(sorted(all_items)):
                 if item.name.startswith('.') or item.name.startswith(' ') or item.name == 'desktop.ini':
                     continue
                 
@@ -442,7 +469,15 @@ async def upload_icon_image(file: UploadFile = File(...)):
             # 정적 이미지만 RGBA 변환 + 리사이즈
             img = Image.open(BytesIO(content))
             img = img.convert('RGBA')
-            img = img.resize((128, 128), Image.Resampling.LANCZOS)
+            # 원본 해상도 최대한 보존 (사용자가 슬라이더로 크기 조절)
+            # 매우 큰 이미지만 1024px로 제한 (메모리 절약)
+            orig_w, orig_h = img.size
+            max_dim = max(orig_w, orig_h)
+            if max_dim > 1024:
+                ratio = 1024 / max_dim
+                img = img.resize(
+                    (int(orig_w * ratio), int(orig_h * ratio)),
+                    Image.Resampling.LANCZOS)
             img.save(save_path, 'PNG')
 
         return {
@@ -499,7 +534,8 @@ async def create_icon_mapping(mapping: IconMapping):
             'target_path':   mapping.target_path,
             'x':             mapping.x,
             'y':             mapping.y,
-            'size':          80,
+            'size':          mapping.size,
+            'hover_image_path': mapping.hover_image_path,
             'show_name':     mapping.show_name,
             'font_family':   mapping.font_family,
             'font_size':     mapping.font_size,
@@ -516,6 +552,9 @@ async def create_icon_mapping(mapping: IconMapping):
         
         print(f"✅ 매핑 저장 완료 (실행 경로: {mapping.target_path})")
         
+        # 오버레이에 IPC로 재로드 알림 (프로세스 재시작 없이 즉시 반영)
+        notify_overlay("/reload")
+        
         return {"success": True, "message": "매핑 저장됨"}
         
     except Exception as e:
@@ -525,10 +564,12 @@ async def create_icon_mapping(mapping: IconMapping):
 
 
 class IconMappingUpdate(BaseModel):
-    name:          str  = ""
-    image_path:    str  = ""
-    target_path:   str  = ""
-    show_name:     bool = True
+    name:              str  = ""
+    image_path:        str  = ""
+    hover_image_path:  str  = ""
+    target_path:       str  = ""
+    size:              int  = 80
+    show_name:         bool = True
     font_family:   str  = "Segoe UI"
     font_size:     int  = 9
     font_bold:     bool = True
@@ -552,6 +593,8 @@ async def update_icon_mapping(icon_id: str, data: IconMappingUpdate):
                 if data.name:          m['name']          = data.name
                 if data.image_path:    m['image_path']    = data.image_path
                 if data.target_path:   m['target_path']   = data.target_path
+                m['size']          = data.size
+                m['hover_image_path'] = data.hover_image_path
                 m['show_name']     = data.show_name
                 m['font_family']   = data.font_family
                 m['font_size']     = data.font_size
@@ -568,11 +611,12 @@ async def update_icon_mapping(icon_id: str, data: IconMappingUpdate):
         with open(ICON_CONFIG_PATH, 'w', encoding='utf-8') as f:
             json.dump(mappings, f, ensure_ascii=False, indent=2)
 
-        print(f"✅ 아이콘 수정: {icon_id}")
+        saved_size = next((m.get('size') for m in mappings if m.get('id') == icon_id), None)
+        print(f"✅ 아이콘 수정 완료: {icon_id} | size={saved_size}")
 
-        # 오버레이에 재로드 명령 전송
+        # 오버레이에 재로드 명령 전송 (실패해도 mtime 폴링이 백업)
         notify_overlay("/reload")
-        return {"success": True, "message": "수정 완료"}
+        return {"success": True, "message": "수정 완료", "saved_size": saved_size}
     except HTTPException:
         raise
     except Exception as e:
@@ -593,6 +637,9 @@ async def delete_icon_mapping(icon_id: str):
         
         with open(ICON_CONFIG_PATH, 'w', encoding='utf-8') as f:
             json.dump(mappings, f, ensure_ascii=False, indent=2)
+        
+        # 오버레이에 IPC로 재로드 알림
+        notify_overlay("/reload")
         
         return {"success": True, "message": "삭제 완료"}
         
@@ -659,7 +706,8 @@ async def update_settings(s: SettingsModel):
 
 # ── 그리드 정렬 ────────────────────────────────────────────────────────
 def get_work_area():
-    """작업 표시줄 제외한 실제 바탕화면 영역"""
+    """작업 표시줄 제외 바탕화면 영역
+    DPI-aware 앱에서 SystemParametersInfoW는 이미 논리픽셀 반환 - 변환 불필요"""
     import ctypes.wintypes as wt
     rect = wt.RECT()
     ctypes.windll.user32.SystemParametersInfoW(48, 0, ctypes.byref(rect), 0)
@@ -716,6 +764,48 @@ async def get_overlay_status():
         running = False
     print(f"  overlay-status: {running}")
     return {"running": running}
+
+
+@app.get("/api/icons/pick-file")
+async def pick_file_dialog():
+    """QFileDialog로 파일 선택 - 기본 경로: 바탕화면 (공용 포함)"""
+    import threading, queue
+    result_q = queue.Queue()
+
+    def _show_dialog():
+        try:
+            from PySide6.QtWidgets import QApplication, QFileDialog
+            from PySide6.QtCore import Qt
+
+            app = QApplication.instance()
+            if not app:
+                import sys
+                app = QApplication(sys.argv)
+
+            # 바탕화면 경로 (개인 우선)
+            desktop = Path.home() / "Desktop"
+            if not desktop.exists():
+                public = os.environ.get('PUBLIC', r'C:\Users\Public')
+                desktop = Path(public) / "Desktop"
+
+            file_path, _ = QFileDialog.getOpenFileName(
+                None,
+                "실행 파일 선택",
+                str(desktop),
+                "모든 파일 (*.*)"
+            )
+            result_q.put(file_path or "")
+        except Exception as e:
+            print(f"파일 선택 오류: {e}")
+            result_q.put("")
+
+    t = threading.Thread(target=_show_dialog)
+    t.start()
+    t.join(timeout=60)
+
+    file_path = result_q.get() if not result_q.empty() else ""
+    name = Path(file_path).stem if file_path else ""
+    return {"file_path": file_path, "name": name}
 
 
 @app.post("/api/icons/reload-overlay")
