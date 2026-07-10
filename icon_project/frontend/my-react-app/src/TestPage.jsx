@@ -1,209 +1,302 @@
-import React, { useState } from 'react';
-import { Home, Compass, Archive, Code, Settings, User, Play, Monitor, Menu, ChevronLeft } from 'lucide-react';
+import { useState } from 'react';
 
 export default function TestPage({ onNavigate }) {
   const [activeMenu, setActiveMenu] = useState('test');
   const [sidebarOpen, setSidebarOpen] = useState(true);
-
-  // --- [상태 관리: 계산기 및 런처] ---
   const [calcExpression, setCalcExpression] = useState("");
   const [calcResult, setCalcResult] = useState("");
   const [launchStatus, setLaunchStatus] = useState("");
 
-  // 1. 계산기 통신 함수
+  // 계산기 로직
   const handleCalculate = async (val) => {
     if (val === "C") {
       setCalcExpression("");
       setCalcResult("");
       return;
     }
+
     if (val === "=") {
       if (!calcExpression) return;
+      
       try {
         const response = await fetch('http://localhost:8000/api/calculate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ expression: calcExpression }),
         });
+        
         const data = await response.json();
+        
         if (response.ok) {
           setCalcResult(data.result);
-          setCalcExpression(data.result);
-        } else { setCalcResult("오류"); }
-      } catch (err) { setCalcResult("서버 연결 실패"); }
+        } else {
+          setCalcResult("Error");
+        }
+      } catch (error) {
+        setCalcResult("Connection Error");
+      }
       return;
     }
-    setCalcExpression(prev => prev + val);
-    setCalcResult("");
+
+    setCalcExpression(calcExpression + val);
   };
 
-  // 2. 데스크톱 런처 실행 함수
+  // 런처 실행
   const handleLaunchLauncher = async () => {
-    setLaunchStatus("런처 기동 중...");
+    setLaunchStatus("실행 중...");
+    
     try {
       const response = await fetch('http://localhost:8000/api/launch-launcher', {
         method: 'POST',
       });
+      
       const data = await response.json();
+      
       if (response.ok) {
-        setLaunchStatus("성공: 런처가 실행되었습니다.");
-        setTimeout(() => setLaunchStatus(""), 4000);
+        setLaunchStatus(data.message);
       } else {
-        setLaunchStatus("실패: " + data.detail);
+        setLaunchStatus("실행 실패");
       }
-    } catch (err) {
-      setLaunchStatus("서버 연결 실패");
+    } catch (error) {
+      setLaunchStatus("Connection Error");
     }
   };
 
   return (
-    <div className="flex h-screen bg-slate-50 font-sans antialiased">
-      <style>{`
-        .sidebar-item {
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-          position: relative;
-        }
-
-        .sidebar-item::before {
-          content: '';
-          position: absolute;
-          left: 0;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 3px;
-          height: 0;
-          background: linear-gradient(180deg, #ec4899, #f97316);
-          border-radius: 0 2px 2px 0;
-          transition: height 0.3s ease;
-        }
-
-        .sidebar-item:hover::before,
-        .sidebar-item.active::before {
-          height: 70%;
-        }
-
-        .sidebar-item:hover {
-          background: linear-gradient(90deg, rgba(236,72,153,0.08), transparent);
-          transform: translateX(4px);
-        }
-      `}</style>
-      {/* Sidebar */}
-      <div className={`${sidebarOpen ? 'w-64' : 'w-[52px]'} bg-white/80 backdrop-blur-md border-r border-slate-200/60 flex flex-col shadow-xl transition-all duration-300 overflow-hidden flex-shrink-0`}>
-        <div className="p-3 border-b border-slate-200/60 flex items-center gap-3">
-          {sidebarOpen && (
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              <div className="w-10 h-10 bg-gradient-to-br from-pink-500 to-orange-500 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
-                <User className="w-5 h-5 text-white" />
-              </div>
-              <span className="font-semibold text-slate-800 text-lg truncate">아이콘...</span>
-            </div>
-          )}
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 hover:bg-slate-100 rounded-lg transition-colors flex-shrink-0"
-            title={sidebarOpen ? "사이드바 닫기" : "사이드바 열기"}
+    <div className="flex h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      {/* 왼쪽 사이드바 */}
+      <div className={`bg-white border-r shadow-sm ${sidebarOpen ? 'w-64' : 'w-0'} transition-all duration-300 overflow-hidden`}>
+        <div className="p-6">
+          <button 
+            onClick={() => onNavigate('explore')}
+            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6 transition-colors"
           >
-            {sidebarOpen
-              ? <ChevronLeft className="w-5 h-5 text-slate-600" />
-              : <Menu className="w-5 h-5 text-slate-600" />
-            }
+            <span className="text-xl">←</span>
+            <span className="text-sm font-medium">아이콘...</span>
           </button>
         </div>
 
-        <nav className="flex-1 p-2">
-          <div className="space-y-1">
-            {[
-              { id: 'home', icon: Home, label: '홈' },
-              { id: 'explore', icon: Compass, label: '탐색' },
-              { id: 'archive', icon: Archive, label: '보관함' },
-              { id: 'settings', icon: Settings, label: '설정' },
-              { id: 'test', icon: Code, label: '테스트 페이지' },
-            ].map(item => (
-              <div
-                key={item.id}
-                onClick={() => {
-                  if (item.id !== 'settings') {
-                    onNavigate && onNavigate(item.id);
-                  }
-                }}
-                className={`sidebar-item flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer ${
-                  item.id === 'test'
-                    ? 'active text-slate-900 bg-gradient-to-r from-pink-50 to-transparent font-semibold'
-                    : 'text-slate-700 hover:text-slate-900 font-medium'
-                }`}
-              >
-                <item.icon className="w-5 h-5 flex-shrink-0" />
-                {sidebarOpen && <span className="truncate">{item.label}</span>}
-              </div>
-            ))}
-          </div>
+        <nav className="space-y-1 px-3">
+          {/* 홈 */}
+          <button
+            onClick={() => {
+              setActiveMenu('home');
+              onNavigate('home');
+            }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              activeMenu === 'home' ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <span className="text-lg">🏠</span>
+            <span className="text-sm font-medium">홈</span>
+          </button>
+
+          {/* 탐색 */}
+          <button
+            onClick={() => {
+              setActiveMenu('explore');
+              onNavigate('explore');
+            }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              activeMenu === 'explore' ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <span className="text-lg">🔍</span>
+            <span className="text-sm font-medium">탐색</span>
+          </button>
+
+          {/* 보관함 */}
+          <button
+            onClick={() => {
+              setActiveMenu('archive');
+              onNavigate('archive');
+            }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              activeMenu === 'archive' ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <span className="text-lg">📦</span>
+            <span className="text-sm font-medium">보관함</span>
+          </button>
+
+          {/* 설정 */}
+          <button
+            onClick={() => {
+              setActiveMenu('settings');
+              onNavigate('settings');
+            }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              activeMenu === 'settings' ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <span className="text-lg">⚙️</span>
+            <span className="text-sm font-medium">설정</span>
+          </button>
+
+          {/* 테스트 페이지 */}
+          <button
+            onClick={() => {
+              setActiveMenu('test');
+              onNavigate('test');
+            }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              activeMenu === 'test' ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <span className="text-lg">🧪</span>
+            <span className="text-sm font-medium">테스트 페이지</span>
+          </button>
+
+          {/* 적용창 - 새로 추가! */}
+          <button
+            onClick={() => {
+              setActiveMenu('apply-window');
+              onNavigate('apply-window');
+            }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              activeMenu === 'apply-window' ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <span className="text-lg">🎨</span>
+            <span className="text-sm font-medium">적용창</span>
+          </button>
         </nav>
       </div>
 
-      {/* 메인 콘텐츠 */}
-      <main className="flex-1 overflow-y-auto p-10">
-        <header className="mb-10">
-          <h2 className="text-3xl font-bold text-slate-900 mb-2">보안 도구 테스트 센터</h2>
-          <p className="text-slate-500">정보보안 프로젝트의 기능을 실시간으로 제어하고 모니터링합니다.</p>
-        </header>
+      {/* 메인 컨텐츠 */}
+      <div className="flex-1 overflow-auto">
+        <div className="max-w-7xl mx-auto p-8">
+          {/* 헤더 */}
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">보안 도구 테스트 센터</h1>
+            <p className="text-gray-600">정보보안 프로젝트의 기능을 실시간으로 체험하고 모니터링합니다.</p>
+          </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* 영역 1: 데스크톱 아이콘 런처 (PySide6 실행 영역) */}
-          <section className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden">
-            <div className="bg-emerald-600 p-5 text-white flex justify-between items-center font-bold">
-              <span className="flex items-center gap-2"><Monitor size={20} /> 데스크톱 런처 제어</span>
-              <span className="text-xs bg-white/20 px-3 py-1 rounded-full uppercase">Active Control</span>
-            </div>
-            <div className="p-8 h-[420px] bg-slate-900 flex flex-col items-center justify-center text-center">
-              <div className="w-24 h-24 bg-emerald-500/10 rounded-full flex items-center justify-center mb-6 border border-emerald-500/20">
-                <Play className="text-emerald-400 fill-emerald-400 ml-1" size={40} />
+          {/* 카드 그리드 */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* 데스크톱 런처 제어 */}
+            <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                  <span className="text-2xl">💻</span>
+                  데스크톱 런처 제어
+                </h2>
+                <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">
+                  ACTIVE CONTROL
+                </span>
               </div>
-              <h3 className="text-white text-xl font-bold mb-3">Desktop Icon Launcher v3.1</h3>
-              <p className="text-slate-400 text-sm mb-8 leading-relaxed max-w-xs">
-                바탕화면 항목을 자동으로 스캔하여 GIF 커스텀 아이콘을 생성하는 프로그램을 기동합니다.
-              </p>
+
+              <div className="bg-gray-900 rounded-lg p-8 mb-4">
+                <div className="flex flex-col items-center justify-center space-y-4">
+                  <div className="w-20 h-20 bg-green-600 rounded-full flex items-center justify-center">
+                    <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  </div>
+                  
+                  <div className="text-center">
+                    <h3 className="text-white text-xl font-bold mb-2">Desktop Icon Launcher v3.1</h3>
+                    <p className="text-gray-400 text-sm">
+                      바탕화면 항목을 자동으로 스캔하여 GUI 커스텀 아이콘을 생성하는 프로그램을 기동합니다.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <button
                 onClick={handleLaunchLauncher}
-                className="px-10 py-4 bg-emerald-500 hover:bg-emerald-400 text-white font-extrabold rounded-2xl transition-all active:scale-95 shadow-lg shadow-emerald-500/20"
+                className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-lg transition-colors"
               >
                 런처 프로그램 실행
               </button>
-              {launchStatus && <p className="mt-4 text-emerald-400 text-sm font-medium animate-pulse">{launchStatus}</p>}
-            </div>
-          </section>
 
-          {/* 영역 2: 계산기 테스트 (FastAPI 연동) */}
-          <section className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden">
-            <div className="bg-indigo-600 p-5 text-white flex justify-between items-center font-bold">
-              <span className="flex items-center gap-2"><Settings size={20} /> 백엔드 연산 테스트</span>
-              <span className="text-xs bg-white/20 px-3 py-1 rounded-full uppercase">Connected</span>
+              {launchStatus && (
+                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-700">{launchStatus}</p>
+                </div>
+              )}
             </div>
-            <div className="p-8 h-[420px] bg-slate-900 flex flex-col">
-              <div className="bg-slate-800 p-5 rounded-2xl mb-6 text-right border border-slate-700 shadow-inner">
-                <div className="text-slate-500 text-sm font-mono mb-1 h-5">{calcExpression}</div>
-                <div className="text-white text-4xl font-bold font-mono tracking-tighter">{calcResult || calcExpression || "0"}</div>
+
+            {/* 백엔드 연산 테스트 */}
+            <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                  <span className="text-2xl">⚙️</span>
+                  백엔드 연산 테스트
+                </h2>
+                <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
+                  CONNECTED
+                </span>
               </div>
-              <div className="grid grid-cols-4 gap-3 flex-1">
-                {["7", "8", "9", "/", "4", "5", "6", "*", "1", "2", "3", "-", "0", ".", "C", "+"].map(btn => (
-                  <button
-                    key={btn}
-                    onClick={() => handleCalculate(btn)}
-                    className="bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold rounded-xl transition-colors text-lg"
-                  >
-                    {btn}
-                  </button>
-                ))}
-                <button
-                  onClick={() => handleCalculate("=")}
-                  className="col-span-4 bg-indigo-500 hover:bg-indigo-400 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-500/20"
-                >
-                  Request Analysis
-                </button>
+
+              <div className="bg-gray-900 rounded-lg p-6 mb-4">
+                <div className="mb-4">
+                  <input
+                    type="text"
+                    value={calcExpression}
+                    readOnly
+                    placeholder="0"
+                    className="w-full bg-gray-800 text-white text-right text-2xl p-4 rounded-lg border-2 border-gray-700 font-mono"
+                  />
+                </div>
+
+                <div className="grid grid-cols-4 gap-2">
+                  {['7', '8', '9', '/'].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => handleCalculate(val)}
+                      className="bg-gray-700 hover:bg-gray-600 text-white py-3 rounded-lg font-semibold transition-colors"
+                    >
+                      {val}
+                    </button>
+                  ))}
+                  {['4', '5', '6', '*'].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => handleCalculate(val)}
+                      className="bg-gray-700 hover:bg-gray-600 text-white py-3 rounded-lg font-semibold transition-colors"
+                    >
+                      {val}
+                    </button>
+                  ))}
+                  {['1', '2', '3', '-'].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => handleCalculate(val)}
+                      className="bg-gray-700 hover:bg-gray-600 text-white py-3 rounded-lg font-semibold transition-colors"
+                    >
+                      {val}
+                    </button>
+                  ))}
+                  {['0', '.', 'C', '+'].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => handleCalculate(val)}
+                      className="bg-gray-700 hover:bg-gray-600 text-white py-3 rounded-lg font-semibold transition-colors"
+                    >
+                      {val}
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              <button
+                onClick={() => handleCalculate('=')}
+                className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 rounded-lg transition-colors"
+              >
+                Request Analysis
+              </button>
+
+              {calcResult && (
+                <div className="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                  <p className="text-sm text-gray-600 mb-1">Result:</p>
+                  <p className="text-2xl font-bold text-purple-700">{calcResult}</p>
+                </div>
+              )}
             </div>
-          </section>
+          </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

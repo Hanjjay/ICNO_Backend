@@ -1,32 +1,69 @@
-{
-    "Claude.lnk": {
-        "image_path": "resourse/dun.png",
-        "program_path": "C:\\Users\\33549\\AppData\\Local\\AnthropicClaude\\claude.exe",
-        "pos_x": 10,
-        "pos_y": 10
-    },
-    "GitHub Desktop.lnk": {
-        "image_path": "resourse/dun.png",
-        "program_path": "C:\\Users\\33549\\AppData\\Local\\GitHubDesktop\\GitHubDesktop.exe",
-        "pos_x": 120,
-        "pos_y": 10
-    },
-    "terrible": {
-        "image_path": "resourse/dun.png",
-        "program_path": "C:\\Users\\33549\\OneDrive\\바탕 화면\\terrible",
-        "pos_x": 230,
-        "pos_y": 10
-    },
-    "testingcode": {
-        "image_path": "resourse/dun.png",
-        "program_path": "C:\\Users\\33549\\OneDrive\\바탕 화면\\testingcode",
-        "pos_x": 340,
-        "pos_y": 10
-    },
-    "평화로운것들": {
-        "image_path": "resourse/dun.png",
-        "program_path": "C:\\Users\\33549\\OneDrive\\바탕 화면\\평화로운것들",
-        "pos_x": 450,
-        "pos_y": 10
-    }
-}
+[
+  {
+    "id": "0f0e9c5a-7c95-4480-8f3b-d266fc1ef497",
+    "name": "메인 파일",
+    "image_path": "C:\\Users\\서승린\\Documents\\GitHub\\inco\\icon_project\\engine\\custom_icons\\a35861ac_dhofgr3-16d5e9cb-081a-48da-8f6a-dd6f0a8d8f87.png",
+    "target_path": "C:\\Users\\서승린\\Desktop\\닭",
+    "x": 1263,
+    "y": 649,
+    "size": 166,
+    "show_name": false,
+    "font_family": "맑은 고딕",
+    "font_size": 10,
+    "font_bold": true,
+    "font_italic": false,
+    "font_color": "#ffffff",
+    "outline_color": "#000000",
+    "hover_image_path": ""
+  },
+  {
+    "id": "1d4aa0eb-af8a-47d6-a51c-7b6853fe7468",
+    "name": "Claude ",
+    "image_path": "C:\\Users\\서승린\\Documents\\GitHub\\inco\\icon_project\\engine\\custom_icons\\027596df_KakaoTalk_20260402_163628664-removebg-preview.png",
+    "target_path": "C:\\Users\\서승린\\Desktop\\Claude - 바로 가기.lnk",
+    "x": 622,
+    "y": 732,
+    "size": 74,
+    "show_name": false,
+    "font_family": "맑은 고딕",
+    "font_size": 10,
+    "font_bold": true,
+    "font_italic": false,
+    "font_color": "#ffffff",
+    "outline_color": "#000000",
+    "hover_image_path": ""
+  },
+  {
+    "id": "78ca6dae-d55a-4b29-adfe-1d5450526a5b",
+    "name": "바탕 화면 ",
+    "image_path": "C:\\Users\\서승린\\Documents\\GitHub\\inco\\icon_project\\engine\\custom_icons\\c78a1e2b_12-124270_squidward-tentacles-png-squidward-from-spongebob.png",
+    "target_path": "C:\\Users\\서승린\\Desktop",
+    "x": 460,
+    "y": 617,
+    "size": 184,
+    "show_name": false,
+    "font_family": "맑은 고딕",
+    "font_size": 10,
+    "font_bold": true,
+    "font_italic": false,
+    "font_color": "#ffffff",
+    "outline_color": "#000000"
+  },
+  {
+    "id": "b1562dc8-dcf3-44cd-9b0f-0634a183cfd3",
+    "name": "GitHubDesktop",
+    "image_path": "C:\\Users\\서승린\\Documents\\GitHub\\inco\\icon_project\\engine\\custom_icons\\0d573b76_26-268960_scared-spongebob-png-image-download-spongebob-squarepants-in.png",
+    "target_path": "C:/Users/서승린/AppData/Local/GitHubDesktop/GitHubDesktop.exe",
+    "x": 1110,
+    "y": 662,
+    "size": 140,
+    "hover_image_path": "",
+    "show_name": false,
+    "font_family": "맑은 고딕",
+    "font_size": 10,
+    "font_bold": true,
+    "font_italic": false,
+    "font_color": "#ffffff",
+    "outline_color": "#000000"
+  }
+]
