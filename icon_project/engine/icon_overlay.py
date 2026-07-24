@@ -196,7 +196,7 @@ def _load_gif_frames(path, target_size):
     frames = []
     try:
         with Image.open(path) as im:
-            r = min(target_size / im.width, target_size / im.height)
+            r = target_size / im.width   # 너비 기준 (편집기 width:100% 와 일치)
             sw, sh = max(1, int(im.width*r)), max(1, int(im.height*r))
             for i in range(getattr(im, 'n_frames', 1)):
                 im.seek(i)
@@ -315,7 +315,7 @@ class CustomIcon(QWidget):
                 self.cur_frame  = frames[0][0]
         else:
             raw = QPixmap(self.image_path)
-            px  = raw.scaled(s,s, Qt.KeepAspectRatio, Qt.SmoothTransformation) if not raw.isNull() else (lambda p: (p.fill(BG_COLOR), p)[1])(QPixmap(s,s))
+            px  = raw.scaledToWidth(s, Qt.SmoothTransformation) if not raw.isNull() else (lambda p: (p.fill(BG_COLOR), p)[1])(QPixmap(s,s))
             self.img_label.setFixedSize(px.width(), px.height())
             self.img_label.setPixmap(px)
             self.img_w, self.img_h = px.width(), px.height()

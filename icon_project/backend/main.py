@@ -135,6 +135,35 @@ def _sha256_bytes(content: bytes) -> str:
     import hashlib
     return hashlib.sha256(content).hexdigest()
 
+
+def _adopt_orphan_icons() -> list:
+    """custom_icons 폴더에 있으나 library.json에 없는 파일에 asset_id를 부여해 흡수.
+    (예전에 수동으로 넣은 아이콘 파일들을 보관함에 등록해 asset_id를 갖게 함)"""
+    library = load_library()
+    known = {a.get("storage_filename") for a in library}
+    changed = False
+    for f in sorted(CUSTOM_ICONS_DIR.glob("*")):
+        if f.suffix.lower() not in ['.png', '.jpg', '.jpeg', '.gif']:
+            continue
+        if f.name in known:
+            continue
+        library.append({
+            "asset_id":         str(uuid.uuid4()),
+            "display_name":     f.stem,
+            "storage_filename": f.name,
+            "local_image_path": str(f),
+            "origin":           "local-engine",
+            "pack_id":          None,
+            "sha256":           "",
+            "created_at":       _now_iso(),
+            "updated_at":       _now_iso(),
+        })
+        known.add(f.name)
+        changed = True
+    if changed:
+        save_library(library)
+    return library
+
 # Windows subprocess 플래그
 if sys.platform == "win32":
     CREATE_NO_WINDOW = 0x08000000
@@ -493,19 +522,25 @@ async def get_desktop_icons():
 
 @app.get("/api/icons/images")
 async def get_custom_images():
-    """업로드된 이미지 목록"""
+    """업로드된 이미지 목록 (asset_id 포함 - 보관함 흡수용)"""
     try:
+        library = _adopt_orphan_icons()
+        by_name = {a.get("storage_filename"): a for a in library}
         images = []
-        
+
         if CUSTOM_ICONS_DIR.exists():
             for file in CUSTOM_ICONS_DIR.glob("*"):
                 if file.suffix.lower() in ['.png', '.jpg', '.jpeg', '.gif']:
+                    a = by_name.get(file.name, {})
                     images.append({
                         'filename': file.name,
                         'path': str(file),
-                        'url': f"/custom_icons/{file.name}"
+                        'url': f"/custom_icons/{file.name}",
+                        'asset_id': a.get('asset_id'),
+                        'storage_filename': file.name,
+                        'display_name': a.get('display_name'),
                     })
-        
+
         return {"images": images}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1018,8 +1053,9 @@ def _model_dump(m) -> dict:
 
 @app.get("/api/icons/library")
 async def get_icon_library():
-    """보관함 아이콘 목록. 실제 파일 존재 여부(file_exists)를 함께 반환."""
-    library = load_library()
+    """보관함 아이콘 목록. 실제 파일 존재 여부(file_exists)를 함께 반환.
+    custom_icons 폴더의 미등록 파일은 asset_id를 부여해 흡수한다."""
+    library = _adopt_orphan_icons()
     for a in library:
         a["file_exists"] = (CUSTOM_ICONS_DIR / a.get("storage_filename", "")).exists()
     return {"assets": library}
