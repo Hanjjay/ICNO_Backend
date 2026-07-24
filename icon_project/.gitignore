@@ -1,0 +1,32 @@
+# ── Python 빌드 부산물 ──────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ── 로컬 실행 상태 (앱이 런타임에 생성/변경) ─────────
+engine/.overlay.pid
+engine/.sig_reload
+engine/.sig_reposition
+engine/.original_wallpaper.txt
+engine/.active_wallpaper.txt
+engine/.backup/
+
+# ── 엔진 데이터 (사용자별 아이콘/프리셋/배경) ────────
+engine/icons_config.json
+engine/settings.json
+engine/library.json
+engine/presets.json
+engine/custom_icons/
+engine/desktop_icons_cache/
+engine/wallpapers/
+
+# ── Node (프론트 하위폴더가 있을 경우) ──────────────
+node_modules/
+package-lock.json
+
+# ── 기타 ────────────────────────────────────────────
+*.log
+.DS_Store
+Thumbs.db
