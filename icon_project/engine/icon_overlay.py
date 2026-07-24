@@ -28,6 +28,8 @@ from PySide6.QtGui   import (QPixmap, QPainter, QColor, QFont, QFontMetrics,
 ENGINE_DIR  = Path(__file__).resolve().parent
 CONFIG_PATH = ENGINE_DIR / "icons_config.json"
 PID_PATH    = ENGINE_DIR / ".overlay.pid"
+ORIGINAL_WALLPAPER_PATH = ENGINE_DIR / ".original_wallpaper.txt"
+ACTIVE_WALLPAPER_PATH   = ENGINE_DIR / ".active_wallpaper.txt"
 CTRL_PORT   = 19876   # IPC 포트
 
 TEXT_GAP = 3
@@ -87,6 +89,92 @@ def _win32_move(hwnd, x, y):
         ctypes.windll.user32.SetWindowPos(
             hwnd, None, int(x), int(y), 0, 0, 0x0001 | 0x0004 | 0x0010)
     except: pass
+
+
+def _find_defview():
+    u32 = ctypes.windll.user32
+    progman = u32.FindWindowW("Progman", None)
+    defview = u32.FindWindowExW(progman, None, "SHELLDLL_DefView", None)
+    if not defview:
+        worker = None
+        while True:
+            worker = u32.FindWindowExW(None, worker, "WorkerW", None)
+            if not worker:
+                break
+            defview = u32.FindWindowExW(worker, None, "SHELLDLL_DefView", None)
+            if defview:
+                break
+    return defview
+
+
+def _show_desktop_icons():
+    """바탕화면 기본 아이콘 표시 (SW_SHOW)."""
+    try:
+        u32 = ctypes.windll.user32
+        defview = _find_defview()
+        if not defview:
+            return
+        lv = u32.FindWindowExW(defview, None, "SysListView32", "FolderView")
+        if lv:
+            u32.ShowWindow(lv, 5)  # SW_SHOW
+    except Exception:
+        pass
+
+
+def _hide_desktop_icons():
+    """바탕화면 기본 아이콘 숨김 (SW_HIDE)."""
+    try:
+        u32 = ctypes.windll.user32
+        defview = _find_defview()
+        if not defview:
+            return
+        lv = u32.FindWindowExW(defview, None, "SysListView32", "FolderView")
+        if lv:
+            u32.ShowWindow(lv, 0)  # SW_HIDE
+    except Exception:
+        pass
+
+
+def _set_wallpaper(path):
+    try:
+        if path and os.path.exists(path):
+            # 배경 표시 방식을 채우기(Fill)로 — 편집기 object-cover 와 일치
+            try:
+                import winreg
+                k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\Desktop",
+                                   0, winreg.KEY_SET_VALUE)
+                winreg.SetValueEx(k, "WallpaperStyle", 0, winreg.REG_SZ, "10")
+                winreg.SetValueEx(k, "TileWallpaper",  0, winreg.REG_SZ, "0")
+                winreg.CloseKey(k)
+            except Exception:
+                pass
+            ctypes.windll.user32.SystemParametersInfoW(20, 0, path, 3)
+    except Exception:
+        pass
+
+
+def _restore_original_wallpaper(clear=True):
+    """원본 배경화면 복원. clear=True면 마커 제거(종료), False면 유지(임시 끄기)."""
+    try:
+        if not ORIGINAL_WALLPAPER_PATH.exists():
+            return
+        orig = ORIGINAL_WALLPAPER_PATH.read_text(encoding="utf-8").strip()
+        _set_wallpaper(orig)
+        if clear:
+            ORIGINAL_WALLPAPER_PATH.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _apply_active_wallpaper():
+    """현재 프리셋 배경화면으로 재적용 (임시 끄기 해제 시)."""
+    try:
+        if not ACTIVE_WALLPAPER_PATH.exists():
+            return
+        wp = ACTIVE_WALLPAPER_PATH.read_text(encoding="utf-8").strip()
+        _set_wallpaper(wp)
+    except Exception:
+        pass
 
 
 def _load_settings():
@@ -198,8 +286,9 @@ class CustomIcon(QWidget):
         print(f"  ✓ [{icon_data.get('name')}] {self.width()}x{self.height()}")
 
     def _calc_size(self):
-        # 너비: 이미지 기준 고정 (텍스트 길이와 무관 → 그리드 정렬 일관성)
-        total_w = self.img_w + PAD * 2
+        # 위젯 너비 = 이미지 너비. 좌우 PAD 여백을 제거해 이미지 좌상단이
+        # 저장된 (x, y)에 정확히 오도록 한다(편집기 미리보기 앵커와 일치).
+        total_w = self.img_w
         if self.show_name:
             # 2줄 높이 계산 (폰트 기반)
             fm = QFontMetrics(QFont(
@@ -359,6 +448,8 @@ class IconOverlay(QWidget):
         self.icons   = []
         self.settings = _load_settings()
         self._saving  = False
+        self._off     = False   # 임시 끄기 상태
+        self._toggle_action = None
 
         # Qt 신호 (스레드 안전)
         self.signals = OverlaySignals()
@@ -457,11 +548,32 @@ class IconOverlay(QWidget):
         px = QPixmap(16,16); px.fill(QColor(70,130,180))
         self.tray_icon.setIcon(QIcon(px))
         menu = QMenu()
-        menu.addAction("🔄 새로고침").triggered.connect(self._full_reload)
+        menu.addAction("🔄 새로고침").triggered.connect(lambda: self._full_reload())
+        # 끄기/켜기: 프로세스는 살려둔 채 잠깐 원래 바탕화면으로 되돌림
+        self._toggle_action = menu.addAction("⏸️ 끄기")
+        self._toggle_action.triggered.connect(lambda: self.toggle_off())
         menu.addSeparator()
-        menu.addAction("❌ 종료").triggered.connect(self.quit_app)
+        # 종료: 완전 종료 + 기본 아이콘 표시 + 원본 배경화면 복원
+        menu.addAction("❌ 종료").triggered.connect(lambda: self.quit_app())
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.show()
+
+    def toggle_off(self):
+        """임시 끄기/켜기 토글. 프로세스는 유지한다."""
+        if not self._off:
+            # 끄기: 오버레이 숨김 + 기본 아이콘 표시 + 원본 배경 복원(마커 유지)
+            for i in self.icons: i.hide()
+            _show_desktop_icons()
+            _restore_original_wallpaper(clear=False)
+            self._off = True
+            if self._toggle_action: self._toggle_action.setText("▶️ 켜기")
+        else:
+            # 켜기: 기본 아이콘 숨김 + 프리셋 배경 재적용 + 오버레이 표시
+            _hide_desktop_icons()
+            _apply_active_wallpaper()
+            for i in self.icons: i.show()
+            self._off = False
+            if self._toggle_action: self._toggle_action.setText("⏸️ 끄기")
 
     def _poll_config(self):
         """mtime 폴링: IPC 실패해도 JSON 변경 감지해서 재로드"""
@@ -479,11 +591,15 @@ class IconOverlay(QWidget):
         except Exception as e:
             print(f"  폴링 오류: {e}")
 
-    def quit_app(self):
+    def quit_app(self, restore=True):
+        """오버레이 종료. restore=True면 기본 아이콘 + 원본 배경화면을 복구."""
         try: PID_PATH.unlink(missing_ok=True)
         except: pass
         self._poll.stop()
         for i in self.icons: i.close()
+        if restore:
+            _show_desktop_icons()
+            _restore_original_wallpaper()
         QApplication.quit()
 
 

@@ -21,7 +21,8 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from PIL import Image
 from io import BytesIO
 
@@ -73,6 +74,67 @@ DESKTOP_ICONS_CACHE = ENGINE_DIR / "desktop_icons_cache"
 CUSTOM_ICONS_DIR.mkdir(exist_ok=True)
 DESKTOP_ICONS_CACHE.mkdir(exist_ok=True)
 
+# ── 신규 저장소 (Phase A/B/B2/C) ─────────────────────────────────────────
+LIBRARY_PATH   = ENGINE_DIR / "library.json"    # 보관함 아이콘 메타데이터
+PRESETS_PATH   = ENGINE_DIR / "presets.json"    # 프리셋(배치/매핑 참조) - 로컬 저장
+WALLPAPERS_DIR = ENGINE_DIR / "wallpapers"      # 업로드된 배경화면 원본
+BACKUP_DIR     = ENGINE_DIR / ".backup"         # apply-local 롤백용 백업
+# 프리셋을 처음 적용하기 직전의 '원래' 배경화면(1회 저장) - 끄기/종료 시 복원용
+ORIGINAL_WALLPAPER_PATH = ENGINE_DIR / ".original_wallpaper.txt"
+# 현재 적용된 프리셋의 배경화면 경로 - 오버레이 '켜기' 때 재적용용
+ACTIVE_WALLPAPER_PATH   = ENGINE_DIR / ".active_wallpaper.txt"
+
+WALLPAPERS_DIR.mkdir(exist_ok=True)
+BACKUP_DIR.mkdir(exist_ok=True)
+
+
+def _load_json(path: Path, default):
+    if not path.exists():
+        return default() if callable(default) else default
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return default() if callable(default) else default
+
+
+def _save_json(path: Path, data):
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_library() -> list:
+    data = _load_json(LIBRARY_PATH, list)
+    return data if isinstance(data, list) else []
+
+
+def save_library(assets: list):
+    _save_json(LIBRARY_PATH, assets)
+
+
+def load_presets() -> list:
+    data = _load_json(PRESETS_PATH, list)
+    return data if isinstance(data, list) else []
+
+
+def save_presets(presets: list):
+    _save_json(PRESETS_PATH, presets)
+
+
+def load_mappings() -> list:
+    data = _load_json(ICON_CONFIG_PATH, list)
+    return data if isinstance(data, list) else []
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _sha256_bytes(content: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(content).hexdigest()
+
 # Windows subprocess 플래그
 if sys.platform == "win32":
     CREATE_NO_WINDOW = 0x08000000
@@ -82,6 +144,7 @@ else:
 # 정적 파일 마운트
 app.mount("/custom_icons", StaticFiles(directory=str(CUSTOM_ICONS_DIR)), name="custom_icons")
 app.mount("/desktop_cache", StaticFiles(directory=str(DESKTOP_ICONS_CACHE)), name="desktop_cache")
+app.mount("/wallpapers", StaticFiles(directory=str(WALLPAPERS_DIR)), name="wallpapers")
 
 
 # =============================================================================
@@ -450,16 +513,36 @@ async def get_custom_images():
 
 @app.post("/api/icons/upload")
 async def upload_icon_image(file: UploadFile = File(...)):
-    """이미지 업로드"""
+    """이미지 업로드 (Phase A: sha256 중복 방지 + library.json 기록)
+
+    응답에 asset_id / local_image_path / storage_filename / duplicate 를 추가.
+    기존 필드(success/filename/url)는 하위호환을 위해 그대로 유지한다.
+    """
     try:
         ext = Path(file.filename).suffix.lower()
         if ext not in ['.png', '.jpg', '.jpeg', '.gif']:
             raise HTTPException(status_code=400, detail="지원하지 않는 형식")
-        
+
+        content = await file.read()
+        sha = _sha256_bytes(content)
+
+        # ── 중복 방지: 동일 sha256 이 이미 보관함에 있으면 재저장 없이 반환 ──
+        library = load_library()
+        for a in library:
+            if a.get("sha256") == sha and (CUSTOM_ICONS_DIR / a.get("storage_filename", "")).exists():
+                return {
+                    "success": True,
+                    "duplicate": True,
+                    "asset_id": a.get("asset_id"),
+                    "storage_filename": a.get("storage_filename"),
+                    "local_image_path": a.get("local_image_path"),
+                    "display_name": a.get("display_name"),
+                    "filename": a.get("storage_filename"),          # 하위호환
+                    "url": f"/custom_icons/{a.get('storage_filename')}",
+                }
+
         unique_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
         save_path = CUSTOM_ICONS_DIR / unique_name
-        
-        content = await file.read()
 
         if ext == '.gif':
             # GIF는 원본 그대로 저장 (변환하면 애니메이션 프레임 소실)
@@ -469,8 +552,6 @@ async def upload_icon_image(file: UploadFile = File(...)):
             # 정적 이미지만 RGBA 변환 + 리사이즈
             img = Image.open(BytesIO(content))
             img = img.convert('RGBA')
-            # 원본 해상도 최대한 보존 (사용자가 슬라이더로 크기 조절)
-            # 매우 큰 이미지만 1024px로 제한 (메모리 절약)
             orig_w, orig_h = img.size
             max_dim = max(orig_w, orig_h)
             if max_dim > 1024:
@@ -480,11 +561,34 @@ async def upload_icon_image(file: UploadFile = File(...)):
                     Image.Resampling.LANCZOS)
             img.save(save_path, 'PNG')
 
+        asset_id = str(uuid.uuid4())
+        display_name = Path(file.filename).stem
+        entry = {
+            "asset_id":         asset_id,
+            "display_name":     display_name,
+            "storage_filename": unique_name,
+            "local_image_path": str(save_path),
+            "origin":           "user-upload",
+            "pack_id":          None,
+            "sha256":           sha,
+            "created_at":       _now_iso(),
+            "updated_at":       _now_iso(),
+        }
+        library.append(entry)
+        save_library(library)
+
         return {
             "success": True,
-            "filename": unique_name,
-            "url": f"/custom_icons/{unique_name}"
+            "duplicate": False,
+            "asset_id": asset_id,
+            "storage_filename": unique_name,
+            "local_image_path": str(save_path),
+            "display_name": display_name,
+            "filename": unique_name,          # 하위호환
+            "url": f"/custom_icons/{unique_name}",
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -902,6 +1006,509 @@ async def launch_apply_window():
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# [Phase B] 보관함 메타데이터 API (library.json)
+# =============================================================================
+
+def _model_dump(m) -> dict:
+    return m.model_dump() if hasattr(m, "model_dump") else m.dict()
+
+
+@app.get("/api/icons/library")
+async def get_icon_library():
+    """보관함 아이콘 목록. 실제 파일 존재 여부(file_exists)를 함께 반환."""
+    library = load_library()
+    for a in library:
+        a["file_exists"] = (CUSTOM_ICONS_DIR / a.get("storage_filename", "")).exists()
+    return {"assets": library}
+
+
+class LibraryPatchModel(BaseModel):
+    display_name: str
+
+
+@app.patch("/api/icons/library/{asset_id}")
+async def update_library_asset(asset_id: str, data: LibraryPatchModel):
+    """표시 이름(display_name)만 변경. 파일명/경로는 불변."""
+    library = load_library()
+    found = False
+    for a in library:
+        if a.get("asset_id") == asset_id:
+            a["display_name"] = data.display_name
+            a["updated_at"] = _now_iso()
+            found = True
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="보관함 아이콘을 찾을 수 없음")
+    save_library(library)
+    return {"success": True, "asset_id": asset_id, "display_name": data.display_name}
+
+
+def _find_asset_references(asset: dict) -> dict:
+    """이 아이콘을 참조하는 프리셋 / 활성 매핑 / 파일 공유 항목을 조사."""
+    asset_id = asset.get("asset_id")
+    local_path = asset.get("local_image_path")
+    storage = asset.get("storage_filename")
+
+    preset_refs = []
+    for p in load_presets():
+        for ic in p.get("icons", []):
+            if ic.get("asset_id") == asset_id:
+                preset_refs.append(p.get("id"))
+                break
+
+    mapping_refs = []
+    for m in load_mappings():
+        if local_path and m.get("image_path") == local_path:
+            mapping_refs.append(m.get("id"))
+
+    shared = [
+        a.get("asset_id") for a in load_library()
+        if a.get("asset_id") != asset_id and a.get("storage_filename") == storage
+    ]
+    return {"presets": preset_refs, "active_mappings": mapping_refs, "shared_assets": shared}
+
+
+@app.delete("/api/icons/library/{asset_id}")
+async def delete_library_asset(asset_id: str, force: bool = False):
+    """보관함 아이콘 삭제. 참조가 있으면 409. force=true 로 강제 삭제."""
+    library = load_library()
+    asset = next((a for a in library if a.get("asset_id") == asset_id), None)
+    if not asset:
+        raise HTTPException(status_code=404, detail="보관함 아이콘을 찾을 수 없음")
+
+    refs = _find_asset_references(asset)
+    in_use = bool(refs["presets"] or refs["active_mappings"])
+    if in_use and not force:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "Icon asset is still in use", "references": refs},
+        )
+
+    library = [a for a in library if a.get("asset_id") != asset_id]
+    still_shared = any(
+        a.get("storage_filename") == asset.get("storage_filename") for a in library
+    )
+    save_library(library)
+
+    deleted_file = False
+    if not still_shared:
+        try:
+            fp = CUSTOM_ICONS_DIR / asset.get("storage_filename", "")
+            if fp.exists():
+                fp.unlink()
+                deleted_file = True
+        except Exception as e:
+            print(f"⚠️ 파일 삭제 실패: {e}")
+
+    return {"success": True, "deleted_file": deleted_file, "forced": bool(in_use and force)}
+
+
+# =============================================================================
+# [Phase B2] 프리셋 로컬 저장 API (presets.json)
+# =============================================================================
+
+class PresetIconModel(BaseModel):
+    asset_id:         str  = ""
+    icon_name:        str  = ""
+    target_path:      str  = ""
+    x:                float = 0
+    y:                float = 0
+    size:             float = 72
+    show_name:        bool = True
+    hover_image_path: str  = ""
+    font_family:      str  = "맑은 고딕"
+    font_size:        int  = 10
+    font_bold:        bool = True
+    font_italic:      bool = False
+    font_color:       str  = "#ffffff"
+    outline_color:    str  = "#000000"
+
+
+class PresetSettingsModel(BaseModel):
+    mode:        str = "free"
+    grid_cell_w: int = 110
+    grid_cell_h: int = 130
+    grid_cols:   int = 0
+
+
+class CanvasModel(BaseModel):
+    w: int = 1920
+    h: int = 1080
+
+
+class PresetModel(BaseModel):
+    id:             str = ""
+    name:           str = ""
+    wallpaper_path: str = ""
+    settings:       PresetSettingsModel = Field(default_factory=PresetSettingsModel)
+    canvas:         CanvasModel = Field(default_factory=CanvasModel)
+    icons:          list[PresetIconModel] = Field(default_factory=list)
+
+
+@app.get("/api/presets")
+async def list_presets():
+    return {"presets": load_presets()}
+
+
+@app.get("/api/presets/{preset_id}")
+async def get_preset(preset_id: str):
+    p = next((x for x in load_presets() if x.get("id") == preset_id), None)
+    if not p:
+        raise HTTPException(status_code=404, detail="프리셋을 찾을 수 없음")
+    return p
+
+
+@app.post("/api/presets")
+async def create_preset(preset: PresetModel):
+    presets = load_presets()
+    data = _model_dump(preset)
+    data["id"] = data.get("id") or str(uuid.uuid4())
+    data["created_at"] = _now_iso()
+    data["updated_at"] = _now_iso()
+    presets = [x for x in presets if x.get("id") != data["id"]]  # upsert
+    presets.append(data)
+    save_presets(presets)
+    return {"success": True, "id": data["id"], "preset": data}
+
+
+@app.put("/api/presets/{preset_id}")
+async def update_preset(preset_id: str, preset: PresetModel):
+    presets = load_presets()
+    existing = next((x for x in presets if x.get("id") == preset_id), None)
+    data = _model_dump(preset)
+    data["id"] = preset_id
+    data["created_at"] = existing.get("created_at") if existing else _now_iso()
+    data["updated_at"] = _now_iso()
+    presets = [x for x in presets if x.get("id") != preset_id]
+    presets.append(data)
+    save_presets(presets)
+    return {"success": True, "id": preset_id, "preset": data}
+
+
+@app.delete("/api/presets/{preset_id}")
+async def delete_preset(preset_id: str):
+    presets = load_presets()
+    if not any(x.get("id") == preset_id for x in presets):
+        raise HTTPException(status_code=404, detail="프리셋을 찾을 수 없음")
+    presets = [x for x in presets if x.get("id") != preset_id]
+    save_presets(presets)
+    return {"success": True}
+
+
+# =============================================================================
+# [Phase C] 배경화면 + 프리셋 전체 적용 (apply-local)
+# =============================================================================
+
+SPI_SETDESKWALLPAPER = 20
+SPI_GETDESKWALLPAPER = 0x0073
+
+
+def get_display_metrics() -> dict:
+    """디스플레이 물리/논리 해상도 + DPI 배율.
+    오버레이(Qt)는 아이콘을 '논리 좌표'로 배치하므로 스케일은 논리 해상도 기준."""
+    phys_w, phys_h = 1920, 1080
+    dpi = 96
+    try:
+        phys_w = int(ctypes.windll.user32.GetSystemMetrics(0)) or 1920
+        phys_h = int(ctypes.windll.user32.GetSystemMetrics(1)) or 1080
+    except Exception:
+        pass
+    try:
+        dpi = int(ctypes.windll.user32.GetDpiForSystem()) or 96
+    except Exception:
+        dpi = 96
+    scale = (dpi / 96.0) if dpi else 1.0
+    log_w = int(round(phys_w / scale)) if scale else phys_w
+    log_h = int(round(phys_h / scale)) if scale else phys_h
+    return {"physical": [phys_w, phys_h], "logical": [log_w, log_h],
+            "dpi": dpi, "scale": round(scale, 4)}
+
+
+def get_screen_size():
+    """오버레이가 사용하는 논리 해상도(px). 실패 시 1920x1080 폴백."""
+    dm = get_display_metrics()
+    lw, lh = dm["logical"]
+    return (lw or 1920), (lh or 1080)
+
+
+def get_current_wallpaper() -> str:
+    """현재 배경화면 경로. SPI 우선, 실패 시 레지스트리 폴백."""
+    val = ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        ctypes.windll.user32.SystemParametersInfoW(SPI_GETDESKWALLPAPER, 1024, buf, 0)
+        val = buf.value or ""
+    except Exception:
+        val = ""
+    if val and os.path.exists(val):
+        return val
+    try:
+        import winreg
+        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\Desktop")
+        v, _ = winreg.QueryValueEx(k, "WallPaper")
+        winreg.CloseKey(k)
+        if v and os.path.exists(v):
+            return v
+    except Exception:
+        pass
+    return val
+
+
+def _ensure_fill_style():
+    """배경화면 표시 방식을 '채우기(Fill)'로 — 편집기 object-cover 와 일치."""
+    try:
+        import winreg
+        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\Desktop",
+                           0, winreg.KEY_SET_VALUE)
+        winreg.SetValueEx(k, "WallpaperStyle", 0, winreg.REG_SZ, "10")
+        winreg.SetValueEx(k, "TileWallpaper",  0, winreg.REG_SZ, "0")
+        winreg.CloseKey(k)
+    except Exception as e:
+        print(f"⚠️ 배경 표시방식 설정 실패: {e}")
+
+
+def set_wallpaper(path: str) -> bool:
+    try:
+        _ensure_fill_style()  # 편집기(object-cover)와 크롭 일치
+        res = ctypes.windll.user32.SystemParametersInfoW(
+            SPI_SETDESKWALLPAPER, 0, str(path), 3)
+        return bool(res)
+    except Exception as e:
+        print(f"❌ 배경화면 적용 실패: {e}")
+        return False
+
+
+def capture_original_wallpaper_once():
+    """프리셋 적용 직전의 배경화면을 1회 저장(파일 복사). TranscodedWallpaper
+    캐시 덮어쓰기 대비. 못 읽으면 저장 안 하고 다음 기회에 재시도."""
+    try:
+        if ORIGINAL_WALLPAPER_PATH.exists():
+            return
+        cur = get_current_wallpaper()
+        if not cur or not os.path.exists(cur):
+            print(f"⚠️ 원본 배경화면을 읽지 못함(스킵): '{cur}'")
+            return
+        import shutil
+        ext = os.path.splitext(cur)[1] or ".jpg"
+        backup_img = BACKUP_DIR / f"original_wallpaper{ext}"
+        try:
+            shutil.copy2(cur, backup_img)
+            ORIGINAL_WALLPAPER_PATH.write_text(str(backup_img), encoding="utf-8")
+            print(f"✅ 원본 배경화면 복사 저장: {cur} → {backup_img}")
+        except Exception:
+            ORIGINAL_WALLPAPER_PATH.write_text(cur, encoding="utf-8")
+    except Exception as e:
+        print(f"⚠️ 원본 배경화면 저장 실패: {e}")
+
+
+def restore_original_wallpaper() -> str:
+    """저장된 원본 배경화면으로 복원 후 마커 제거. 복원한 경로 반환('' 가능)."""
+    try:
+        if not ORIGINAL_WALLPAPER_PATH.exists():
+            return ""
+        orig = ORIGINAL_WALLPAPER_PATH.read_text(encoding="utf-8").strip()
+        if orig and os.path.exists(orig):
+            set_wallpaper(orig)
+        ORIGINAL_WALLPAPER_PATH.unlink(missing_ok=True)
+        return orig
+    except Exception as e:
+        print(f"⚠️ 원본 배경화면 복원 실패: {e}")
+        return ""
+
+
+def _restart_overlay() -> bool:
+    """오버레이 종료 후 재시작 (reload-overlay 로직과 동일)."""
+    import time
+    kill_overlay_processes()
+    time.sleep(0.4)
+    script_path = ENGINE_DIR / "icon_overlay.py"
+    if not script_path.exists():
+        return False
+    if sys.platform == "win32":
+        subprocess.Popen([sys.executable, str(script_path)],
+                         cwd=str(ENGINE_DIR), creationflags=CREATE_NO_WINDOW)
+    else:
+        subprocess.Popen([sys.executable, str(script_path)], cwd=str(ENGINE_DIR))
+    return True
+
+
+@app.get("/api/display/info")
+async def get_display_info():
+    """현재 디스플레이 물리/논리 해상도 + DPI 배율."""
+    return get_display_metrics()
+
+
+@app.post("/api/wallpaper/upload")
+async def upload_wallpaper(file: UploadFile = File(...)):
+    """배경화면 파일 업로드 → 엔진 로컬 절대경로 반환."""
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif']:
+        raise HTTPException(status_code=400, detail="지원하지 않는 형식")
+    content = await file.read()
+    unique = f"{uuid.uuid4().hex}{ext}"
+    save_path = WALLPAPERS_DIR / unique
+    with open(save_path, 'wb') as f:
+        f.write(content)
+    return {"success": True, "wallpaper_path": str(save_path), "url": f"/wallpapers/{unique}"}
+
+
+class WallpaperApplyModel(BaseModel):
+    wallpaper_path: str
+
+
+@app.post("/api/wallpaper/apply")
+async def apply_wallpaper(data: WallpaperApplyModel):
+    if not os.path.exists(data.wallpaper_path):
+        raise HTTPException(status_code=404, detail="배경화면 파일 없음")
+    if not set_wallpaper(data.wallpaper_path):
+        raise HTTPException(status_code=500, detail="배경화면 적용 실패")
+    return {"success": True}
+
+
+@app.post("/api/presets/{preset_id}/apply-local")
+async def apply_preset_local(preset_id: str):
+    """저장된 프리셋을 원자적으로 적용. 실패 시 전체 롤백."""
+    import shutil
+
+    preset = next((x for x in load_presets() if x.get("id") == preset_id), None)
+    if not preset:
+        raise HTTPException(status_code=404, detail="프리셋을 찾을 수 없음")
+
+    # 0. 최초 원본 배경화면 1회 저장 (끄기/종료 시 복원용)
+    capture_original_wallpaper_once()
+
+    # 1. 백업 (icons_config.json, settings.json, 현재 배경화면 경로)
+    prev_wallpaper = get_current_wallpaper()
+    backup = {}
+    try:
+        if ICON_CONFIG_PATH.exists():
+            shutil.copy2(ICON_CONFIG_PATH, BACKUP_DIR / "icons_config.json.bak")
+            backup["icons"] = True
+        if SETTINGS_PATH.exists():
+            shutil.copy2(SETTINGS_PATH, BACKUP_DIR / "settings.json.bak")
+            backup["settings"] = True
+        (BACKUP_DIR / "wallpaper.txt").write_text(prev_wallpaper or "", encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"백업 실패: {e}")
+
+    def _rollback():
+        try:
+            if backup.get("icons"):
+                shutil.copy2(BACKUP_DIR / "icons_config.json.bak", ICON_CONFIG_PATH)
+            if backup.get("settings"):
+                shutil.copy2(BACKUP_DIR / "settings.json.bak", SETTINGS_PATH)
+            if prev_wallpaper:
+                set_wallpaper(prev_wallpaper)
+        except Exception as e:
+            print(f"⚠️ 롤백 실패: {e}")
+
+    try:
+        # 2. asset_id → local_image_path 해석 + 파일 검증
+        library = {a.get("asset_id"): a for a in load_library()}
+        canvas = preset.get("canvas") or {}
+        cw = canvas.get("w") or 1920
+        ch = canvas.get("h") or 1080
+        dm = get_display_metrics()
+        screen_w, screen_h = dm["logical"]   # 논리 해상도 기준으로 스케일
+        sx = screen_w / cw
+        sy = screen_h / ch
+        s_uniform = min(sx, sy)  # 크기는 비율 유지
+
+        new_mappings = []
+        warnings = []
+        for ic in preset.get("icons", []):
+            asset = library.get(ic.get("asset_id"))
+            image_path = asset.get("local_image_path") if asset else ""
+            if not image_path or not os.path.exists(image_path):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"아이콘 이미지 파일 없음: {ic.get('icon_name') or ic.get('asset_id')}",
+                )
+            tp = ic.get("target_path", "")
+            if tp and not os.path.exists(tp):
+                warnings.append(f"연결 대상 없음: {tp}")
+            new_mappings.append({
+                "id":               str(uuid.uuid4()),
+                "name":             ic.get("icon_name", ""),
+                "image_path":       image_path,
+                "target_path":      tp,
+                "x":                int(round(float(ic.get("x", 0)) * sx)),
+                "y":                int(round(float(ic.get("y", 0)) * sy)),
+                "size":             int(round(float(ic.get("size", 72)) * s_uniform)),
+                "hover_image_path": ic.get("hover_image_path", ""),
+                "show_name":        ic.get("show_name", True),
+                "font_family":      ic.get("font_family", "맑은 고딕"),
+                "font_size":        ic.get("font_size", 10),
+                "font_bold":        ic.get("font_bold", True),
+                "font_italic":      ic.get("font_italic", False),
+                "font_color":       ic.get("font_color", "#ffffff"),
+                "outline_color":    ic.get("outline_color", "#000000"),
+            })
+
+        # 3. 매핑 일괄 교체
+        _save_json(ICON_CONFIG_PATH, new_mappings)
+
+        # 4. settings 저장
+        settings = load_settings()
+        settings.update(preset.get("settings") or {})
+        save_settings(settings)
+
+        # 5. 배경화면 적용
+        wp = preset.get("wallpaper_path", "")
+        if wp:
+            if not os.path.exists(wp):
+                raise HTTPException(status_code=400, detail=f"배경화면 파일 없음: {wp}")
+            if not set_wallpaper(wp):
+                raise HTTPException(status_code=500, detail="배경화면 적용 실패")
+
+        # 6. Windows 기본 아이콘 숨김
+        set_desktop_icons_visible(False)
+
+        # 7. 오버레이 재시작
+        _restart_overlay()
+
+        # 활성 배경화면 기록 (오버레이 '켜기' 시 재적용용)
+        try:
+            ACTIVE_WALLPAPER_PATH.write_text(wp or "", encoding="utf-8")
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "preset_id": preset_id,
+            "applied_icons": len(new_mappings),
+            "scale": {"sx": round(sx, 4), "sy": round(sy, 4),
+                       "logical": dm["logical"], "physical": dm["physical"],
+                       "dpi": dm["dpi"], "dpi_scale": dm["scale"]},
+            "warnings": warnings,
+        }
+    except HTTPException:
+        _rollback()
+        raise
+    except Exception as e:
+        _rollback()
+        raise HTTPException(status_code=500, detail=f"적용 실패(롤백됨): {e}")
+
+
+@app.post("/api/overlay/deactivate")
+async def deactivate_overlay():
+    """프리셋 끄기 — 오버레이 종료 + 기본 아이콘 복원 + 원본 배경화면 복원."""
+    killed = kill_overlay_processes()
+    shown = set_desktop_icons_visible(True)
+    restored = restore_original_wallpaper()
+    try:
+        ACTIVE_WALLPAPER_PATH.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return {
+        "success": True,
+        "killed": killed,
+        "desktop_icons_restored": bool(shown),
+        "wallpaper_restored_to": restored,
+    }
 
 
 if __name__ == "__main__":
