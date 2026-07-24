@@ -909,40 +909,71 @@ async def get_overlay_status():
 
 @app.get("/api/icons/pick-file")
 async def pick_file_dialog():
-    """QFileDialog로 파일 선택 - 기본 경로: 바탕화면 (공용 포함)"""
+    """Windows 네이티브 파일 선택 대화상자(comdlg32 GetOpenFileNameW) - 절대경로 반환.
+    Qt QFileDialog는 별도 스레드에서 불안정하므로 ctypes 네이티브 API 사용."""
     import threading, queue
     result_q = queue.Queue()
 
     def _show_dialog():
         try:
-            from PySide6.QtWidgets import QApplication, QFileDialog
-            from PySide6.QtCore import Qt
+            import ctypes
+            from ctypes import wintypes
 
-            app = QApplication.instance()
-            if not app:
-                import sys
-                app = QApplication(sys.argv)
-
-            # 바탕화면 경로 (개인 우선)
             desktop = Path.home() / "Desktop"
             if not desktop.exists():
                 public = os.environ.get('PUBLIC', r'C:\Users\Public')
                 desktop = Path(public) / "Desktop"
 
-            file_path, _ = QFileDialog.getOpenFileName(
-                None,
-                "실행 파일 선택",
-                str(desktop),
-                "모든 파일 (*.*)"
-            )
-            result_q.put(file_path or "")
+            class OPENFILENAMEW(ctypes.Structure):
+                _fields_ = [
+                    ("lStructSize", wintypes.DWORD),
+                    ("hwndOwner", wintypes.HWND),
+                    ("hInstance", wintypes.HINSTANCE),
+                    ("lpstrFilter", wintypes.LPCWSTR),
+                    ("lpstrCustomFilter", wintypes.LPWSTR),
+                    ("nMaxCustFilter", wintypes.DWORD),
+                    ("nFilterIndex", wintypes.DWORD),
+                    ("lpstrFile", wintypes.LPWSTR),
+                    ("nMaxFile", wintypes.DWORD),
+                    ("lpstrFileTitle", wintypes.LPWSTR),
+                    ("nMaxFileTitle", wintypes.DWORD),
+                    ("lpstrInitialDir", wintypes.LPCWSTR),
+                    ("lpstrTitle", wintypes.LPCWSTR),
+                    ("Flags", wintypes.DWORD),
+                    ("nFileOffset", wintypes.WORD),
+                    ("nFileExtension", wintypes.WORD),
+                    ("lpstrDefExt", wintypes.LPCWSTR),
+                    ("lCustData", wintypes.LPARAM),
+                    ("lpfnHook", wintypes.LPVOID),
+                    ("lpTemplateName", wintypes.LPCWSTR),
+                    ("pvReserved", wintypes.LPVOID),
+                    ("dwReserved", wintypes.DWORD),
+                    ("FlagsEx", wintypes.DWORD),
+                ]
+
+            buf = ctypes.create_unicode_buffer(1024)
+            ofn = OPENFILENAMEW()
+            ofn.lStructSize = ctypes.sizeof(OPENFILENAMEW)
+            try:
+                ofn.hwndOwner = ctypes.windll.user32.GetForegroundWindow()
+            except Exception:
+                ofn.hwndOwner = 0
+            ofn.lpstrFile = ctypes.cast(buf, wintypes.LPWSTR)
+            ofn.nMaxFile = 1024
+            ofn.lpstrTitle = "실행 파일/폴더 선택"
+            ofn.lpstrInitialDir = str(desktop)
+            # OFN_FILEMUSTEXIST(0x1000)|OFN_HIDEREADONLY(0x4)|OFN_EXPLORER(0x80000)|OFN_NOCHANGEDIR(0x8)
+            ofn.Flags = 0x1000 | 0x4 | 0x80000 | 0x8
+
+            ok = ctypes.windll.comdlg32.GetOpenFileNameW(ctypes.byref(ofn))
+            result_q.put(buf.value if ok else "")
         except Exception as e:
             print(f"파일 선택 오류: {e}")
             result_q.put("")
 
     t = threading.Thread(target=_show_dialog)
     t.start()
-    t.join(timeout=60)
+    t.join(timeout=120)
 
     file_path = result_q.get() if not result_q.empty() else ""
     name = Path(file_path).stem if file_path else ""
