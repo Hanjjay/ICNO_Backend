@@ -83,6 +83,8 @@ BACKUP_DIR     = ENGINE_DIR / ".backup"         # apply-local 롤백용 백업
 ORIGINAL_WALLPAPER_PATH = ENGINE_DIR / ".original_wallpaper.txt"
 # 현재 적용된 프리셋의 배경화면 경로 - 오버레이 '켜기' 때 재적용용
 ACTIVE_WALLPAPER_PATH   = ENGINE_DIR / ".active_wallpaper.txt"
+# 현재 적용된 프리셋 id - 홈 화면 '현재 적용 중' 표시용
+ACTIVE_PRESET_PATH      = ENGINE_DIR / ".active_preset.txt"
 
 WALLPAPERS_DIR.mkdir(exist_ok=True)
 BACKUP_DIR.mkdir(exist_ok=True)
@@ -1184,9 +1186,43 @@ class PresetModel(BaseModel):
     icons:          list[PresetIconModel] = Field(default_factory=list)
 
 
+def _enrich_preset(p: dict, lib: dict = None) -> dict:
+    """프리셋에 렌더용 상대 URL을 추가(저장은 안 함).
+    - wallpaper_url: /wallpapers/<파일명>
+    - icons[].image_url: asset_id → library → /custom_icons/<파일명>
+    프론트는 localEngineUrl()로 접두어를 붙여 썸네일/미리보기를 렌더한다."""
+    if lib is None:
+        lib = {a.get("asset_id"): a for a in load_library()}
+    q = dict(p)
+    wp = p.get("wallpaper_path", "") or ""
+    q["wallpaper_url"] = f"/wallpapers/{os.path.basename(wp)}" if wp else ""
+    icons = []
+    for ic in p.get("icons", []):
+        ic2 = dict(ic)
+        a = lib.get(ic.get("asset_id"))
+        ic2["image_url"] = f"/custom_icons/{a.get('storage_filename')}" if a and a.get("storage_filename") else ""
+        icons.append(ic2)
+    q["icons"] = icons
+    return q
+
+
 @app.get("/api/presets")
 async def list_presets():
-    return {"presets": load_presets()}
+    lib = {a.get("asset_id"): a for a in load_library()}
+    return {"presets": [_enrich_preset(p, lib) for p in load_presets()]}
+
+
+@app.get("/api/active-preset")
+async def get_active_preset():
+    """현재 적용 중인 프리셋(홈 화면 표시용). 없으면 active=None."""
+    try:
+        if not ACTIVE_PRESET_PATH.exists():
+            return {"active": None}
+        pid = ACTIVE_PRESET_PATH.read_text(encoding="utf-8").strip()
+        p = next((x for x in load_presets() if x.get("id") == pid), None)
+        return {"active": _enrich_preset(p) if p else None}
+    except Exception:
+        return {"active": None}
 
 
 @app.get("/api/presets/{preset_id}")
@@ -1194,7 +1230,7 @@ async def get_preset(preset_id: str):
     p = next((x for x in load_presets() if x.get("id") == preset_id), None)
     if not p:
         raise HTTPException(status_code=404, detail="프리셋을 찾을 수 없음")
-    return p
+    return _enrich_preset(p)
 
 
 @app.post("/api/presets")
@@ -1232,6 +1268,21 @@ async def delete_preset(preset_id: str):
     presets = [x for x in presets if x.get("id") != preset_id]
     save_presets(presets)
     return {"success": True}
+
+
+@app.patch("/api/presets/{preset_id}")
+async def patch_preset(preset_id: str, patch: dict):
+    """프리셋 부분 수정 (이름 변경 등). 허용 필드만 병합."""
+    presets = load_presets()
+    p = next((x for x in presets if x.get("id") == preset_id), None)
+    if not p:
+        raise HTTPException(status_code=404, detail="프리셋을 찾을 수 없음")
+    for k in ("name", "wallpaper_path", "settings", "canvas", "icons"):
+        if k in patch:
+            p[k] = patch[k]
+    p["updated_at"] = _now_iso()
+    save_presets(presets)
+    return {"success": True, "id": preset_id, "preset": _enrich_preset(p)}
 
 
 # =============================================================================
@@ -1506,9 +1557,10 @@ async def apply_preset_local(preset_id: str):
         # 7. 오버레이 재시작
         _restart_overlay()
 
-        # 활성 배경화면 기록 (오버레이 '켜기' 시 재적용용)
+        # 활성 배경화면 + 활성 프리셋 id 기록
         try:
             ACTIVE_WALLPAPER_PATH.write_text(wp or "", encoding="utf-8")
+            ACTIVE_PRESET_PATH.write_text(preset_id, encoding="utf-8")
         except Exception:
             pass
 
@@ -1537,6 +1589,7 @@ async def deactivate_overlay():
     restored = restore_original_wallpaper()
     try:
         ACTIVE_WALLPAPER_PATH.unlink(missing_ok=True)
+        ACTIVE_PRESET_PATH.unlink(missing_ok=True)
     except Exception:
         pass
     return {

@@ -11,6 +11,7 @@ engine/.sig_reload
 engine/.sig_reposition
 engine/.original_wallpaper.txt
 engine/.active_wallpaper.txt
+engine/.active_preset.txt
 engine/.backup/
 
 # ── 엔진 데이터 (사용자별 아이콘/프리셋/배경) ────────
