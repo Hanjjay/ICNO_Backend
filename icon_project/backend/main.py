@@ -211,28 +211,56 @@ def _validate_image_bytes(content: bytes, allowed_formats: set) -> str:
 
 
 def _adopt_orphan_icons() -> list:
-    """custom_icons 폴더에 있으나 library.json에 없는 파일에 asset_id를 부여해 흡수.
-    (예전에 수동으로 넣은 아이콘 파일들을 보관함에 등록해 asset_id를 갖게 함)"""
+    """custom_icons 폴더에 있으나 library.json에 없는 파일을 흡수.
+
+    asset_id 안정성: 파일 내용 sha256을 계산해, 같은 내용이 이미 등록돼 있으면
+    기존 asset_id를 재사용한다(새 id 남발 방지). 기존 항목의 파일이 사라졌다면
+    이 파일로 복구(repoint)해 참조 깨짐을 최소화한다. 없을 때만 새 id 발급."""
     library = load_library()
     known = {a.get("storage_filename") for a in library}
+    # 내용 해시 → 기존 asset (해시가 기록된 항목만)
+    sha_map = {a.get("sha256"): a for a in library if a.get("sha256")}
     changed = False
     for f in sorted(CUSTOM_ICONS_DIR.glob("*")):
         if f.suffix.lower() not in ['.png', '.jpg', '.jpeg', '.gif']:
             continue
         if f.name in known:
             continue
-        library.append({
+        try:
+            sha = _sha256_bytes(f.read_bytes())
+        except Exception:
+            sha = ""
+
+        existing = sha_map.get(sha) if sha else None
+        if existing:
+            # 같은 내용이 이미 등록됨 → 기존 asset 재사용.
+            old_name = existing.get("storage_filename", "")
+            if not (CUSTOM_ICONS_DIR / old_name).exists():
+                # 기존 파일이 사라졌으면 이 파일로 복구(repoint)
+                existing["storage_filename"] = f.name
+                existing["local_image_path"] = str(f)
+                existing["updated_at"] = _now_iso()
+                known.add(f.name)
+                changed = True
+            # 파일이 살아있으면 중복 내용이므로 새 항목을 만들지 않음
+            continue
+
+        # 신규 내용 → 새 asset 발급 (sha256 기록)
+        entry = {
             "asset_id":         str(uuid.uuid4()),
             "display_name":     f.stem,
             "storage_filename": f.name,
             "local_image_path": str(f),
             "origin":           "local-engine",
             "pack_id":          None,
-            "sha256":           "",
+            "sha256":           sha,
             "created_at":       _now_iso(),
             "updated_at":       _now_iso(),
-        })
+        }
+        library.append(entry)
         known.add(f.name)
+        if sha:
+            sha_map[sha] = entry
         changed = True
     if changed:
         save_library(library)
@@ -1348,10 +1376,10 @@ async def get_preset(preset_id: str):
 async def create_preset(preset: PresetModel):
     presets = load_presets()
     data = _model_dump(preset)
-    data["id"] = data.get("id") or str(uuid.uuid4())
+    # id는 항상 서버가 발급 (클라이언트가 보낸 id로 기존 프리셋을 덮어쓰는 것 방지)
+    data["id"] = str(uuid.uuid4())
     data["created_at"] = _now_iso()
     data["updated_at"] = _now_iso()
-    presets = [x for x in presets if x.get("id") != data["id"]]  # upsert
     presets.append(data)
     save_presets(presets)
     return {"success": True, "id": data["id"], "preset": data}
@@ -1383,14 +1411,32 @@ async def delete_preset(preset_id: str):
 
 @app.patch("/api/presets/{preset_id}")
 async def patch_preset(preset_id: str, patch: dict):
-    """프리셋 부분 수정 (이름 변경 등). 허용 필드만 병합."""
+    """프리셋 부분 수정 (이름 변경 등). 허용 필드만, 스키마 검증 후 병합.
+
+    대량 할당 방지: 중첩 값(settings/canvas/icons)을 타입 모델로 재검증해
+    선언되지 않은(미사용) 필드가 주입/저장되지 않도록 한다.
+    """
     presets = load_presets()
     p = next((x for x in presets if x.get("id") == preset_id), None)
     if not p:
         raise HTTPException(status_code=404, detail="프리셋을 찾을 수 없음")
-    for k in ("name", "wallpaper_path", "settings", "canvas", "icons"):
-        if k in patch:
-            p[k] = patch[k]
+    try:
+        for k in ("name", "wallpaper_path", "settings", "canvas", "icons"):
+            if k not in patch:
+                continue
+            v = patch[k]
+            if k == "settings":
+                p[k] = _model_dump(PresetSettingsModel(**(v or {})))
+            elif k == "canvas":
+                p[k] = _model_dump(CanvasModel(**(v or {})))
+            elif k == "icons":
+                p[k] = [_model_dump(PresetIconModel(**(ic or {}))) for ic in (v or [])]
+            else:  # name, wallpaper_path — 문자열만 허용
+                p[k] = str(v) if v is not None else ""
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"잘못된 프리셋 데이터: {e}")
     p["updated_at"] = _now_iso()
     save_presets(presets)
     return {"success": True, "id": preset_id, "preset": _enrich_preset(p)}
