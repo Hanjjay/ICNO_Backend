@@ -26,16 +26,53 @@ from pydantic import BaseModel, Field
 from PIL import Image
 from io import BytesIO
 
-app = FastAPI()
+# ── 개발/릴리스 모드 ─────────────────────────────────────────────
+# 릴리스에서는 ICNO_DEV=0 으로 실행해 /docs, /openapi 를 비활성화한다.
+# (공격자가 API 명세를 읽어 자동화 공격에 쓰는 것을 방지)
+IS_DEV = os.environ.get("ICNO_DEV", "1") != "0"
+
+app = FastAPI(
+    docs_url="/docs" if IS_DEV else None,
+    redoc_url="/redoc" if IS_DEV else None,
+    openapi_url="/openapi.json" if IS_DEV else None,
+)
+
+# ── 허용 Origin (CSRF 방지) ───────────────────────────────────────
+# 프론트 개발 서버 + (배포 시) 실제 프론트 도메인. 환경변수로 추가 가능.
+ALLOWED_ORIGINS = {
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+}
+if IS_DEV:
+    ALLOWED_ORIGINS |= {"http://127.0.0.1:8000", "http://localhost:8000"}  # Swagger 용
+_extra = os.environ.get("ICNO_ALLOWED_ORIGINS", "").strip()
+if _extra:
+    ALLOWED_ORIGINS |= {o.strip() for o in _extra.split(",") if o.strip()}
 
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=list(ALLOWED_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Origin 검증 미들웨어 (CSRF 방어) ──────────────────────────────
+# 상태 변경 요청(POST/PUT/PATCH/DELETE)과 민감 GET(pick-file)에 대해,
+# 브라우저가 보낸 Origin 이 허용 목록에 없으면 403 으로 차단한다.
+# Origin 이 없는 요청(비브라우저 도구/동일 출처)은 통과시킨다.
+_SENSITIVE_GET_PATHS = {"/api/icons/pick-file"}
+
+@app.middleware("http")
+async def origin_guard(request, call_next):
+    method = request.method.upper()
+    path = request.url.path
+    if method in ("POST", "PUT", "PATCH", "DELETE") or path in _SENSITIVE_GET_PATHS:
+        origin = request.headers.get("origin")
+        if origin is not None and origin not in ALLOWED_ORIGINS:
+            return JSONResponse(status_code=403, content={"detail": "Origin not allowed"})
+    return await call_next(request)
 
 # 경로 설정
 BACKEND_DIR = Path(__file__).parent
@@ -136,6 +173,41 @@ def _now_iso() -> str:
 def _sha256_bytes(content: bytes) -> str:
     import hashlib
     return hashlib.sha256(content).hexdigest()
+
+
+# ── 보안 헬퍼 (파일/이미지 검증) ─────────────────────────────────────────
+MAX_ICON_BYTES      = 15 * 1024 * 1024   # 아이콘 업로드 상한 15MB
+MAX_WALLPAPER_BYTES = 40 * 1024 * 1024   # 배경화면 업로드 상한 40MB
+# PIL 디컴프레션 봄(decompression bomb) 방지: 지나치게 큰 이미지 거부
+try:
+    Image.MAX_IMAGE_PIXELS = 64_000_000  # 약 8000x8000
+except Exception:
+    pass
+
+
+def _is_within(base: Path, target: Path) -> bool:
+    """target 경로가 base 폴더 안에 있는지 검증 (경로 탈출 '../' 방지)."""
+    try:
+        base_r = base.resolve()
+        target_r = target.resolve()
+        return target_r == base_r or base_r in target_r.parents
+    except Exception:
+        return False
+
+
+def _validate_image_bytes(content: bytes, allowed_formats: set) -> str:
+    """PIL로 실제 이미지인지 검증하고 포맷을 반환. 확장자 위조/손상 파일 차단."""
+    try:
+        with Image.open(BytesIO(content)) as im:
+            fmt = (im.format or "").upper()
+            im.verify()  # 손상/위조 검사
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="유효한 이미지 파일이 아닙니다.")
+    if fmt not in allowed_formats:
+        raise HTTPException(status_code=400, detail=f"허용되지 않은 이미지 형식: {fmt}")
+    return fmt
 
 
 def _adopt_orphan_icons() -> list:
@@ -561,6 +633,10 @@ async def upload_icon_image(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="지원하지 않는 형식")
 
         content = await file.read()
+        if len(content) > MAX_ICON_BYTES:
+            raise HTTPException(status_code=400, detail="파일이 너무 큽니다 (최대 15MB)")
+        # 실제 이미지인지 검증 (확장자 위조/손상 파일 차단)
+        _validate_image_bytes(content, {"PNG", "JPEG", "GIF"})
         sha = _sha256_bytes(content)
 
         # ── 중복 방지: 동일 sha256 이 이미 보관함에 있으면 재저장 없이 반환 ──
@@ -578,10 +654,14 @@ async def upload_icon_image(file: UploadFile = File(...)):
                     "url": f"/custom_icons/{a.get('storage_filename')}",
                 }
 
-        unique_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+        # 파일명을 순수 UUID로 생성 (원본 파일명 미사용 → 경로 탈출/위조 차단)
+        is_gif = (ext == '.gif')
+        unique_name = f"{uuid.uuid4().hex}{'.gif' if is_gif else '.png'}"
         save_path = CUSTOM_ICONS_DIR / unique_name
+        if not _is_within(CUSTOM_ICONS_DIR, save_path):
+            raise HTTPException(status_code=400, detail="잘못된 저장 경로")
 
-        if ext == '.gif':
+        if is_gif:
             # GIF는 원본 그대로 저장 (변환하면 애니메이션 프레임 소실)
             with open(save_path, 'wb') as f:
                 f.write(content)
@@ -1166,7 +1246,7 @@ async def delete_library_asset(asset_id: str, force: bool = False):
     if not still_shared:
         try:
             fp = CUSTOM_ICONS_DIR / asset.get("storage_filename", "")
-            if fp.exists():
+            if _is_within(CUSTOM_ICONS_DIR, fp) and fp.exists():
                 fp.unlink()
                 deleted_file = True
         except Exception as e:
@@ -1462,12 +1542,17 @@ async def get_display_info():
 @app.post("/api/wallpaper/upload")
 async def upload_wallpaper(file: UploadFile = File(...)):
     """배경화면 파일 업로드 → 엔진 로컬 절대경로 반환."""
-    ext = Path(file.filename).suffix.lower()
+    ext = Path(file.filename or "").suffix.lower()
     if ext not in ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif']:
         raise HTTPException(status_code=400, detail="지원하지 않는 형식")
     content = await file.read()
+    if len(content) > MAX_WALLPAPER_BYTES:
+        raise HTTPException(status_code=400, detail="파일이 너무 큽니다 (최대 40MB)")
+    _validate_image_bytes(content, {"PNG", "JPEG", "GIF", "WEBP", "BMP"})
     unique = f"{uuid.uuid4().hex}{ext}"
     save_path = WALLPAPERS_DIR / unique
+    if not _is_within(WALLPAPERS_DIR, save_path):
+        raise HTTPException(status_code=400, detail="잘못된 저장 경로")
     with open(save_path, 'wb') as f:
         f.write(content)
     return {"success": True, "wallpaper_path": str(save_path), "url": f"/wallpapers/{unique}"}
@@ -1479,6 +1564,9 @@ class WallpaperApplyModel(BaseModel):
 
 @app.post("/api/wallpaper/apply")
 async def apply_wallpaper(data: WallpaperApplyModel):
+    # 심층 방어: 요청받은 경로가 반드시 wallpapers 폴더 안이어야 함
+    if not _is_within(WALLPAPERS_DIR, Path(data.wallpaper_path)):
+        raise HTTPException(status_code=400, detail="허용되지 않은 배경화면 경로")
     if not os.path.exists(data.wallpaper_path):
         raise HTTPException(status_code=404, detail="배경화면 파일 없음")
     if not set_wallpaper(data.wallpaper_path):
@@ -1540,7 +1628,8 @@ async def apply_preset_local(preset_id: str):
         for ic in preset.get("icons", []):
             asset = library.get(ic.get("asset_id"))
             image_path = asset.get("local_image_path") if asset else ""
-            if not image_path or not os.path.exists(image_path):
+            # 심층 방어: 저장된 경로가 custom_icons 폴더 안인지 검증 (library.json 변조 대비)
+            if not image_path or not _is_within(CUSTOM_ICONS_DIR, Path(image_path)) or not os.path.exists(image_path):
                 raise HTTPException(
                     status_code=400,
                     detail=f"아이콘 이미지 파일 없음: {ic.get('icon_name') or ic.get('asset_id')}",
@@ -1577,8 +1666,8 @@ async def apply_preset_local(preset_id: str):
         # 5. 배경화면 적용
         wp = preset.get("wallpaper_path", "")
         if wp:
-            if not os.path.exists(wp):
-                raise HTTPException(status_code=400, detail=f"배경화면 파일 없음: {wp}")
+            if not _is_within(WALLPAPERS_DIR, Path(wp)) or not os.path.exists(wp):
+                raise HTTPException(status_code=400, detail=f"배경화면 경로가 유효하지 않음: {wp}")
             if not set_wallpaper(wp):
                 raise HTTPException(status_code=500, detail="배경화면 적용 실패")
 
