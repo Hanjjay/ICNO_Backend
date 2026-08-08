@@ -91,6 +91,32 @@ def _win32_move(hwnd, x, y):
     except: pass
 
 
+# ── 캔버스 좌표 → 실제 화면 좌표 매핑 ──────────────────────────────
+# 백엔드는 원본 캔버스(1920×1080) 좌표만 넘기고, 실제 배율/해상도에 맞춘
+# 변환은 여기(Qt)에서 한다. Qt의 primaryScreen().geometry() 는 move()/pos()
+# 와 동일한 좌표계라, ctypes DPI 추정과 달리 절대 어긋나지 않는다.
+def _screen_size():
+    scr = QApplication.primaryScreen()
+    g = scr.geometry() if scr else None
+    return (g.width(), g.height()) if g else (1920, 1080)
+
+
+def _cover_scale(cw, ch, sw, sh):
+    if not cw or not ch:
+        return 1.0
+    return max(sw / cw, sh / ch)   # 배경 Fill(cover) 과 동일
+
+
+def _canvas_to_screen(cx, cy, cw, ch, sw, sh):
+    s = _cover_scale(cw, ch, sw, sh)
+    return ((float(cx) - cw / 2) * s + sw / 2, (float(cy) - ch / 2) * s + sh / 2)
+
+
+def _screen_to_canvas(sx, sy, cw, ch, sw, sh):
+    s = _cover_scale(cw, ch, sw, sh) or 1.0
+    return ((float(sx) - sw / 2) / s + cw / 2, (float(sy) - sh / 2) / s + ch / 2)
+
+
 def _find_defview():
     u32 = ctypes.windll.user32
     progman = u32.FindWindowW("Progman", None)
@@ -258,7 +284,12 @@ class CustomIcon(QWidget):
         self.drag_start  = None
         self.show_name   = icon_data.get('show_name', True)
         self.image_path  = icon_data['image_path']
-        self._icon_size  = icon_data.get('size', 80)
+        # 캔버스 좌표 → 실제 화면(Qt) 좌표 매핑 준비 (배율/해상도 독립)
+        self._cw = icon_data.get('canvas_w', 1920) or 1920
+        self._ch = icon_data.get('canvas_h', 1080) or 1080
+        self._sw, self._sh = _screen_size()
+        self._scale = _cover_scale(self._cw, self._ch, self._sw, self._sh)
+        self._icon_size  = max(1, int(round(icon_data.get('size', 80) * self._scale)))
         self.gif_frames  = []
         self.gif_idx     = 0
         self._gif_active = False
@@ -279,7 +310,9 @@ class CustomIcon(QWidget):
         self._load_image()
         self._calc_size()
 
-        self.move(icon_data['x'], icon_data['y'])
+        mx, my = _canvas_to_screen(icon_data['x'], icon_data['y'],
+                                   self._cw, self._ch, self._sw, self._sh)
+        self.move(int(round(mx)), int(round(my)))
         self.show()
         if self.gif_frames:
             QTimer.singleShot(150, self._start_gif)
@@ -376,8 +409,10 @@ class CustomIcon(QWidget):
             p = e.globalPosition().toPoint() - self.drag_start
             # Qt move() → self.pos() 동기화 유지 (다음 드래그 시 튕김 방지)
             self.move(p)
-            self.icon_data['x'] = p.x()
-            self.icon_data['y'] = p.y()
+            # 화면 좌표 → 캔버스 좌표로 역변환해 저장 (config 는 캔버스 좌표 유지)
+            cx, cy = _screen_to_canvas(p.x(), p.y(), self._cw, self._ch, self._sw, self._sh)
+            self.icon_data['x'] = int(round(cx))
+            self.icon_data['y'] = int(round(cy))
 
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -510,7 +545,9 @@ class IconOverlay(QWidget):
                 if nx != icon.icon_data['x'] or ny != icon.icon_data['y']:
                     icon.icon_data['x'] = nx
                     icon.icon_data['y'] = ny
-                    _win32_move(int(icon.winId()), nx, ny)
+                    # 캔버스 좌표 → 실제 화면 좌표로 매핑 후 이동 (Qt 좌표계 일치)
+                    mx, my = _canvas_to_screen(nx, ny, icon._cw, icon._ch, icon._sw, icon._sh)
+                    icon.move(int(round(mx)), int(round(my)))
                     moved += 1
         print(f"  위치 재배치 완료: {moved}개 이동")
 
@@ -524,6 +561,26 @@ class IconOverlay(QWidget):
                     self.icons.append(CustomIcon(d, self))
         except Exception as e:
             print(f"ERROR: {e}")
+
+        # [진단] Qt가 실제로 쓰는 화면 크기 + 아이콘 실제 위치를 파일로 남김
+        try:
+            scr = QApplication.primaryScreen()
+            geo = scr.geometry() if scr else None
+            dbg = {
+                "qt_screen": [geo.width(), geo.height()] if geo else None,
+                "device_pixel_ratio": (scr.devicePixelRatio() if scr else None),
+                "icons": [{
+                    "name": ic.icon_data.get("name"),
+                    "config_xy": [ic.icon_data.get("x"), ic.icon_data.get("y")],
+                    "config_size": ic.icon_data.get("size"),
+                    "actual_pos": [ic.x(), ic.y()],
+                    "actual_wh": [ic.width(), ic.height()],
+                } for ic in self.icons[:8]],
+            }
+            with open(ENGINE_DIR / ".overlay_debug.json", "w", encoding="utf-8") as f:
+                json.dump(dbg, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"debug dump err: {e}")
 
     def save_config(self):
         if self._saving: return

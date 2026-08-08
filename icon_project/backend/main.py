@@ -18,7 +18,7 @@ import uuid
 import ctypes
 import psutil
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
@@ -42,6 +42,8 @@ app = FastAPI(
 ALLOWED_ORIGINS = {
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:8080",   # Vite 개발서버(Lovable 기본 포트)
+    "http://127.0.0.1:8080",
 }
 if IS_DEV:
     ALLOWED_ORIGINS |= {"http://127.0.0.1:8000", "http://localhost:8000"}  # Swagger 용
@@ -53,6 +55,9 @@ if _extra:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(ALLOWED_ORIGINS),
+    # 개발 모드에선 localhost/127.0.0.1/[::1] 의 어떤 포트든 허용
+    # (Vite 포트가 5173/8080 등으로 바뀌어도 이미지 fetch 가 CORS 로 막히지 않게)
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1|\[::1\]):\d+" if IS_DEV else None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,6 +78,20 @@ async def origin_guard(request, call_next):
         if origin is not None and origin not in ALLOWED_ORIGINS:
             return JSONResponse(status_code=403, content={"detail": "Origin not allowed"})
     return await call_next(request)
+
+# ── Vary: Origin 강제 ─────────────────────────────────────────────
+# 이미지가 <img>(비-CORS, Origin 없음)로 먼저 캐시되면, 이후 fetch()(CORS,
+# Origin 있음)가 그 CORS 헤더 없는 캐시본을 재사용해 CORS 에러가 난다.
+# Vary: Origin 을 붙여 브라우저가 두 요청을 캐시에서 구분하게 한다.
+@app.middleware("http")
+async def add_vary_origin(request, call_next):
+    response = await call_next(request)
+    vary = response.headers.get("vary")
+    if not vary:
+        response.headers["Vary"] = "Origin"
+    elif "origin" not in vary.lower():
+        response.headers["Vary"] = vary + ", Origin"
+    return response
 
 # 경로 설정
 BACKEND_DIR = Path(__file__).parent
@@ -1443,6 +1462,169 @@ async def patch_preset(preset_id: str, patch: dict):
 
 
 # =============================================================================
+# [Phase 5] 마켓 다운로드 → 보관함 import
+# =============================================================================
+MARKET_MAX_ICONS           = 30
+MARKET_MAX_ICON_BYTES      = 5 * 1024 * 1024    # 아이콘당 5MB
+MARKET_MAX_WALLPAPER_BYTES = 15 * 1024 * 1024   # 배경 15MB (버킷 상한과 동일)
+MARKET_MAX_TOTAL_BYTES     = 50 * 1024 * 1024   # 프리셋 전체 50MB
+
+
+def _store_icon_bytes(content: bytes) -> dict:
+    """이미지 바이트를 검증·재인코딩·저장하고 library 항목을 반환.
+    동일 sha256 이 이미 보관함에 있으면 재사용(중복 저장 방지)."""
+    if len(content) > MARKET_MAX_ICON_BYTES:
+        raise HTTPException(status_code=400, detail="아이콘 이미지가 너무 큽니다 (최대 5MB)")
+    fmt = _validate_image_bytes(content, {"PNG", "JPEG", "GIF"})
+    sha = _sha256_bytes(content)
+    library = load_library()
+    for a in library:
+        if a.get("sha256") == sha and (CUSTOM_ICONS_DIR / a.get("storage_filename", "")).exists():
+            return a  # 이미 있음 → 재사용
+    is_gif = (fmt == "GIF")
+    unique_name = f"{uuid.uuid4().hex}{'.gif' if is_gif else '.png'}"
+    save_path = CUSTOM_ICONS_DIR / unique_name
+    if not _is_within(CUSTOM_ICONS_DIR, save_path):
+        raise HTTPException(status_code=400, detail="잘못된 저장 경로")
+    if is_gif:
+        with open(save_path, 'wb') as f:
+            f.write(content)
+    else:
+        img = Image.open(BytesIO(content)).convert('RGBA')
+        ow, oh = img.size
+        m = max(ow, oh)
+        if m > 1024:
+            r = 1024 / m
+            img = img.resize((int(ow * r), int(oh * r)), Image.Resampling.LANCZOS)
+        img.save(save_path, 'PNG')
+    entry = {
+        "asset_id":         str(uuid.uuid4()),
+        "display_name":     "market",
+        "storage_filename": unique_name,
+        "local_image_path": str(save_path),
+        "origin":           "market-download",
+        "pack_id":          None,
+        "sha256":           sha,
+        "created_at":       _now_iso(),
+        "updated_at":       _now_iso(),
+    }
+    library.append(entry)
+    save_library(library)
+    return entry
+
+
+def _store_wallpaper_bytes(content: bytes) -> str:
+    """배경 바이트를 검증·재인코딩·저장하고 로컬 절대경로를 반환."""
+    if len(content) > MARKET_MAX_WALLPAPER_BYTES:
+        raise HTTPException(status_code=400, detail="배경 이미지가 너무 큽니다 (최대 15MB)")
+    fmt = _validate_image_bytes(content, {"PNG", "JPEG", "GIF"})
+    is_gif = (fmt == "GIF")
+    unique = f"{uuid.uuid4().hex}{'.gif' if is_gif else '.png'}"
+    save_path = WALLPAPERS_DIR / unique
+    if not _is_within(WALLPAPERS_DIR, save_path):
+        raise HTTPException(status_code=400, detail="잘못된 저장 경로")
+    if is_gif:
+        with open(save_path, 'wb') as f:
+            f.write(content)
+    else:
+        Image.open(BytesIO(content)).convert('RGB').save(save_path, 'PNG')
+    return str(save_path)
+
+
+@app.post("/api/market/import")
+async def import_market_preset(
+    manifest: str = Form(...),
+    files: list[UploadFile] = File(default=[]),
+):
+    """다운로드한 마켓 프리셋을 내 보관함에 저장한다.
+
+    보안 원칙:
+    - 모든 이미지를 서버측에서 재검증 + 재인코딩(EXIF/은닉 페이로드 제거).
+    - target_path(실행 매핑)는 절대 저장하지 않음 → 다운로드 프리셋엔 실행 연결이 없다.
+      (프로그램 연결은 사용자가 자기 PC에서 직접)
+    - 원본 파일명/절대경로 미사용, 저장 파일명은 UUID.
+    - 아이콘 개수·개별/전체 용량 상한.
+
+    manifest(JSON):
+      { name, canvas:{w,h}, wallpaper_key?, icons:[{file_key, x,y,size,show_name, font_*...}] }
+    files: 각 UploadFile.filename == manifest 의 file_key / wallpaper_key
+    """
+    try:
+        m = json.loads(manifest)
+    except Exception:
+        raise HTTPException(status_code=400, detail="manifest 파싱 실패")
+    if not isinstance(m, dict):
+        raise HTTPException(status_code=400, detail="manifest 형식 오류")
+
+    name = (str(m.get("name") or "다운로드한 프리셋")).strip()[:60] or "다운로드한 프리셋"
+    canvas = m.get("canvas") or {}
+    icons_meta = m.get("icons") or []
+    if not isinstance(icons_meta, list):
+        raise HTTPException(status_code=400, detail="icons 형식 오류")
+    if len(icons_meta) > MARKET_MAX_ICONS:
+        raise HTTPException(status_code=400, detail=f"아이콘 개수 초과 (최대 {MARKET_MAX_ICONS})")
+
+    # 업로드 파일을 filename(key) 로 매핑 + 총용량 검사
+    file_map: dict[str, bytes] = {}
+    total = 0
+    for uf in files:
+        content = await uf.read()
+        total += len(content)
+        if total > MARKET_MAX_TOTAL_BYTES:
+            raise HTTPException(status_code=400, detail="전체 용량 초과 (최대 50MB)")
+        file_map[uf.filename] = content
+
+    # 배경 (선택)
+    wallpaper_path = ""
+    wp_key = m.get("wallpaper_key")
+    if wp_key:
+        if wp_key not in file_map:
+            raise HTTPException(status_code=400, detail="배경 파일이 누락되었습니다")
+        wallpaper_path = _store_wallpaper_bytes(file_map[wp_key])
+
+    # 아이콘
+    icon_models: list[PresetIconModel] = []
+    for ic in icons_meta:
+        if not isinstance(ic, dict):
+            continue
+        fkey = ic.get("file_key")
+        if not fkey or fkey not in file_map:
+            raise HTTPException(status_code=400, detail="아이콘 파일이 누락되었습니다")
+        entry = _store_icon_bytes(file_map[fkey])
+        icon_models.append(PresetIconModel(
+            asset_id      = entry["asset_id"],
+            icon_name     = (str(ic.get("icon_name") or "")).strip()[:100],
+            target_path   = "",                       # ★ 실행 매핑 제외 (강제)
+            x             = float(ic.get("x") or 0),
+            y             = float(ic.get("y") or 0),
+            size          = float(ic.get("size") or 72),
+            show_name     = bool(ic.get("show_name", True)),
+            font_family   = str(ic.get("font_family") or "맑은 고딕"),
+            font_size     = int(ic.get("font_size") or 10),
+            font_bold     = bool(ic.get("font_bold", True)),
+            font_italic   = bool(ic.get("font_italic", False)),
+            font_color    = str(ic.get("font_color") or "#ffffff"),
+            outline_color = str(ic.get("outline_color") or "#000000"),
+        ))
+
+    # 프리셋 생성 (id 는 서버가 발급)
+    preset = PresetModel(
+        name           = name,
+        wallpaper_path = wallpaper_path,
+        canvas         = CanvasModel(w=int(canvas.get("w", 1920)), h=int(canvas.get("h", 1080))),
+        icons          = icon_models,
+    )
+    data = _model_dump(preset)
+    data["id"] = str(uuid.uuid4())
+    data["created_at"] = _now_iso()
+    data["updated_at"] = _now_iso()
+    presets = load_presets()
+    presets.append(data)
+    save_presets(presets)
+    return {"success": True, "id": data["id"], "preset": _enrich_preset(data)}
+
+
+# =============================================================================
 # [Phase C] 배경화면 + 프리셋 전체 적용 (apply-local)
 # =============================================================================
 
@@ -1588,19 +1770,30 @@ async def get_display_info():
 @app.post("/api/wallpaper/upload")
 async def upload_wallpaper(file: UploadFile = File(...)):
     """배경화면 파일 업로드 → 엔진 로컬 절대경로 반환."""
+    # 허용: PNG, JPG/JPEG, GIF (WEBP/BMP/SVG 차단 — 공격면 축소, 아이콘 업로드와 통일)
     ext = Path(file.filename or "").suffix.lower()
-    if ext not in ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif']:
+    if ext not in ['.png', '.jpg', '.jpeg', '.gif']:
         raise HTTPException(status_code=400, detail="지원하지 않는 형식")
     content = await file.read()
     if len(content) > MAX_WALLPAPER_BYTES:
         raise HTTPException(status_code=400, detail="파일이 너무 큽니다 (최대 40MB)")
-    _validate_image_bytes(content, {"PNG", "JPEG", "GIF", "WEBP", "BMP"})
-    unique = f"{uuid.uuid4().hex}{ext}"
+    _validate_image_bytes(content, {"PNG", "JPEG", "GIF"})
+
+    is_gif = (ext == '.gif')
+    unique = f"{uuid.uuid4().hex}{'.gif' if is_gif else '.png'}"
     save_path = WALLPAPERS_DIR / unique
     if not _is_within(WALLPAPERS_DIR, save_path):
         raise HTTPException(status_code=400, detail="잘못된 저장 경로")
-    with open(save_path, 'wb') as f:
-        f.write(content)
+
+    if is_gif:
+        # GIF는 원본 유지 (애니메이션 배경)
+        with open(save_path, 'wb') as f:
+            f.write(content)
+    else:
+        # JPG/PNG → PNG로 재인코딩 (메타데이터/페이로드 제거). 배경은 원본 해상도 유지.
+        img = Image.open(BytesIO(content)).convert('RGB')
+        img.save(save_path, 'PNG')
+
     return {"success": True, "wallpaper_path": str(save_path), "url": f"/wallpapers/{unique}"}
 
 
@@ -1663,12 +1856,10 @@ async def apply_preset_local(preset_id: str):
         canvas = preset.get("canvas") or {}
         cw = canvas.get("w") or 1920
         ch = canvas.get("h") or 1080
-        dm = get_display_metrics()
-        screen_w, screen_h = dm["logical"]   # 논리 해상도 기준으로 스케일
-        sx = screen_w / cw
-        sy = screen_h / ch
-        s_uniform = min(sx, sy)  # 크기는 비율 유지
-
+        dm = get_display_metrics()  # 참고용(디버그/응답). 좌표 매핑엔 사용하지 않음.
+        # ★ 좌표는 원본 캔버스 좌표 그대로 기록한다. canvas→화면 cover 매핑은
+        #   오버레이(Qt)가 '실제 화면 지오메트리' 기준으로 수행한다.
+        #   (백엔드 ctypes DPI 추정이 Qt 실제 배율과 어긋나 드리프트가 났었음)
         new_mappings = []
         warnings = []
         for ic in preset.get("icons", []):
@@ -1688,9 +1879,11 @@ async def apply_preset_local(preset_id: str):
                 "name":             ic.get("icon_name", ""),
                 "image_path":       image_path,
                 "target_path":      tp,
-                "x":                int(round(float(ic.get("x", 0)) * sx)),
-                "y":                int(round(float(ic.get("y", 0)) * sy)),
-                "size":             int(round(float(ic.get("size", 72)) * s_uniform)),
+                "x":                int(round(float(ic.get("x", 0)))),
+                "y":                int(round(float(ic.get("y", 0)))),
+                "size":             int(round(float(ic.get("size", 72)))),
+                "canvas_w":         int(cw),
+                "canvas_h":         int(ch),
                 "hover_image_path": ic.get("hover_image_path", ""),
                 "show_name":        ic.get("show_name", True),
                 "font_family":      ic.get("font_family", "맑은 고딕"),
@@ -1703,6 +1896,18 @@ async def apply_preset_local(preset_id: str):
 
         # 3. 매핑 일괄 교체
         _save_json(ICON_CONFIG_PATH, new_mappings)
+
+        # [진단] 좌표 매핑 결과를 파일로 남김 (드리프트 원인 추적용)
+        try:
+            _save_json(ENGINE_DIR / ".apply_debug.json", {
+                "display_metrics": dm,
+                "canvas": [cw, ch],
+                "note": "coords are raw canvas; overlay maps to Qt screen",
+                "icons": [{"name": m["name"], "x": m["x"], "y": m["y"], "size": m["size"]}
+                          for m in new_mappings[:8]],
+            })
+        except Exception:
+            pass
 
         # 4. settings 저장
         settings = load_settings()
@@ -1734,9 +1939,8 @@ async def apply_preset_local(preset_id: str):
             "success": True,
             "preset_id": preset_id,
             "applied_icons": len(new_mappings),
-            "scale": {"sx": round(sx, 4), "sy": round(sy, 4),
-                       "logical": dm["logical"], "physical": dm["physical"],
-                       "dpi": dm["dpi"], "dpi_scale": dm["scale"]},
+            "display": {"logical": dm["logical"], "physical": dm["physical"],
+                        "dpi": dm["dpi"], "dpi_scale": dm["scale"]},
             "warnings": warnings,
         }
     except HTTPException:
