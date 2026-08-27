@@ -5,7 +5,7 @@
 - /reposition → 위치만 업데이트 (그리드 정렬)
 """
 
-import ctypes, json, sys, os, threading
+import ctypes, json, sys, os, threading, time
 
 # ── DPI 인식 선언 (반드시 Qt 초기화 전에 호출) ──────────────
 # Per-Monitor DPI Aware v2: 150% 배율 환경에서 아이콘 재배치 방지
@@ -282,6 +282,9 @@ class CustomIcon(QWidget):
         super().__init__(parent)
         self.icon_data   = icon_data
         self.drag_start  = None
+        self._press_global = None   # 클릭/드래그 구분용 누른 지점
+        self._moved      = False    # 임계값 이상 움직였는지
+        self._last_launch = 0.0     # 실행 디바운스(중복 실행 방지)
         self.show_name   = icon_data.get('show_name', True)
         self.image_path  = icon_data['image_path']
         # 캔버스 좌표 → 실제 화면(Qt) 좌표 매핑 준비 (배율/해상도 독립)
@@ -399,13 +402,23 @@ class CustomIcon(QWidget):
             p.setPen(QColor(self.icon_data.get('font_color', '#ffffff')))
             p.drawText(rect, _flags, name)
 
+    # 드래그로 인정할 최소 이동 거리(px). 이보다 적게 움직이면 '클릭'으로 처리.
+    DRAG_THRESHOLD = 5
+
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
             # self.pos()는 Qt 논리좌표, globalPosition()도 Qt 논리좌표 → 일관성 유지
-            self.drag_start = e.globalPosition().toPoint() - self.pos()
+            self.drag_start    = e.globalPosition().toPoint() - self.pos()
+            self._press_global = e.globalPosition().toPoint()
+            self._moved        = False
 
     def mouseMoveEvent(self, e):
         if e.buttons() == Qt.LeftButton and self.drag_start:
+            # 누른 지점에서 임계값 이상 벗어났을 때만 '드래그'로 간주 (클릭 오인 방지)
+            if not self._moved and self._press_global is not None:
+                if (e.globalPosition().toPoint() - self._press_global).manhattanLength() < self.DRAG_THRESHOLD:
+                    return
+                self._moved = True
             p = e.globalPosition().toPoint() - self.drag_start
             # Qt move() → self.pos() 동기화 유지 (다음 드래그 시 튕김 방지)
             self.move(p)
@@ -416,36 +429,51 @@ class CustomIcon(QWidget):
 
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.LeftButton:
-            if self.drag_start:
-                self.drag_start = None
+            moved = self._moved
+            self.drag_start = None
+            self._moved = False
+            if moved:
+                # 실제로 드래그한 경우 → 위치 저장
                 if self.parent(): self.parent().save_config()
             else:
+                # 움직임 없는 클릭 → 실행 (단일 클릭으로 실행)
                 self.execute_icon()
 
     def mouseDoubleClickEvent(self, e):
-        if e.button() == Qt.LeftButton: self.execute_icon()
+        # 단일 클릭(release)에서 이미 실행되므로, 더블클릭은 디바운스로 중복만 방지.
+        if e.button() == Qt.LeftButton:
+            self.execute_icon()
 
     def closeEvent(self, e):
         self._gif_active = False
         super().closeEvent(e)
 
     def execute_icon(self):
+        # 짧은 시간 내 중복 실행 방지(더블클릭으로 크롬 2번 뜨는 문제 해결)
+        now = time.monotonic()
+        if now - self._last_launch < 0.6:
+            return
+        self._last_launch = now
         try:
             t = self.icon_data.get('target_path')
-            if t and os.path.exists(t): os.startfile(t)
-        except: pass
+            if t and os.path.exists(t):
+                os.startfile(t)   # 파일·바로가기·폴더 모두 열림
+        except Exception:
+            pass
 
     def show_context_menu(self, pos):
         m = QMenu()
         r  = m.addAction("✏️ 이름 바꾸기")
         tn = m.addAction("이름 숨기기" if self.show_name else "이름 표시")
         st = m.addAction("📂 실행 파일 설정")
+        sf = m.addAction("📁 폴더 설정")
         m.addSeparator()
         dl = m.addAction("❌ 삭제")
         a  = m.exec_(self.mapToGlobal(pos))
         if a==r: self.rename_icon()
         elif a==tn: self.toggle_name()
         elif a==st: self.set_target_path()
+        elif a==sf: self.set_target_folder()
         elif a==dl: self.delete_icon()
 
     def rename_icon(self):
@@ -467,6 +495,13 @@ class CustomIcon(QWidget):
         fp,_ = QFileDialog.getOpenFileName(self,"실행 파일 선택",str(Path.home()),"모든 파일 (*.*)")
         if fp:
             self.icon_data['target_path'] = fp
+            if self.parent(): self.parent().save_config()
+
+    def set_target_folder(self):
+        # 폴더를 아이콘 대상으로 지정 (클릭 시 탐색기로 폴더 열림)
+        d = QFileDialog.getExistingDirectory(self, "폴더 선택", str(Path.home()))
+        if d:
+            self.icon_data['target_path'] = d
             if self.parent(): self.parent().save_config()
 
     def delete_icon(self):

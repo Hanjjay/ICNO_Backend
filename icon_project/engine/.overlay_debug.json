@@ -1,0 +1,73 @@
+{
+  "qt_screen": [
+    2048,
+    1152
+  ],
+  "device_pixel_ratio": 1.25,
+  "icons": [
+    {
+      "name": "027596df_KakaoTalk_20260402_163628664-removebg-preview",
+      "config_xy": [
+        617,
+        712
+      ],
+      "config_size": 89,
+      "actual_pos": [
+        658,
+        759
+      ],
+      "actual_wh": [
+        95,
+        97
+      ]
+    },
+    {
+      "name": "a0d465bb_12-124270_squidward-tentacles-png-squidward-from-sp",
+      "config_xy": [
+        464,
+        585
+      ],
+      "config_size": 148,
+      "actual_pos": [
+        495,
+        624
+      ],
+      "actual_wh": [
+        158,
+        222
+      ]
+    },
+    {
+      "name": "854b9caf_26-268960_scared-spongebob-png-image-download-spong",
+      "config_xy": [
+        1112,
+        631
+      ],
+      "config_size": 135,
+      "actual_pos": [
+        1186,
+        673
+      ],
+      "actual_wh": [
+        144,
+        180
+      ]
+    },
+    {
+      "name": "db021f46_dhofgr3-16d5e9cb-081a-48da-8f6a-dd6f0a8d8f87",
+      "config_xy": [
+        1260,
+        634
+      ],
+      "config_size": 152,
+      "actual_pos": [
+        1344,
+        676
+      ],
+      "actual_wh": [
+        162,
+        193
+      ]
+    }
+  ]
+}

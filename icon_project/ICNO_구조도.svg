@@ -1,0 +1,85 @@
+<svg viewBox="0 0 980 680" xmlns="http://www.w3.org/2000/svg" font-family="Malgun Gothic, Segoe UI, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#64748b"/>
+    </marker>
+    <marker id="arrowO" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#c2410c"/>
+    </marker>
+    <marker id="arrowStart" markerWidth="10" markerHeight="10" refX="0" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M8,0 L0,3 L8,6 Z" fill="#c2410c"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="490" y="38" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">ICNO 앱 전체 구조</text>
+  <text x="490" y="62" text-anchor="middle" font-size="13" fill="#64748b">핵심 원칙: 클라우드는 바탕화면을 직접 바꾸지 않는다 — 실제 변경은 사용자 PC의 로컬 엔진만 수행</text>
+
+  <!-- 사용자 PC container -->
+  <rect x="30" y="84" width="590" height="548" rx="14" fill="#f4f6f8" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="48" y="108" font-size="14" font-weight="700" fill="#475569">사용자 PC (로컬)</text>
+
+  <!-- 사용자 -->
+  <rect x="230" y="120" width="200" height="40" rx="8" fill="#e2e8f0" stroke="#94a3b8"/>
+  <text x="330" y="145" text-anchor="middle" font-size="14" fill="#334155">사용자 (브라우저)</text>
+
+  <!-- 웹 프론트엔드 -->
+  <rect x="140" y="184" width="380" height="60" rx="10" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="330" y="208" text-anchor="middle" font-size="15" font-weight="700" fill="#1e40af">웹 프론트엔드</text>
+  <text x="330" y="228" text-anchor="middle" font-size="12" fill="#1e3a8a">React · Vite · TS / Tailwind (Lovable)  ·  :5173</text>
+
+  <!-- 로컬 엔진 API -->
+  <rect x="110" y="288" width="440" height="82" rx="10" fill="#dcfce7" stroke="#22c55e" stroke-width="1.5"/>
+  <text x="330" y="312" text-anchor="middle" font-size="15" font-weight="700" fill="#15803d">로컬 엔진 API · FastAPI  (127.0.0.1:8000)</text>
+  <text x="330" y="333" text-anchor="middle" font-size="12" fill="#166534">프리셋 저장 · 실제 적용(원자적/롤백)</text>
+  <text x="330" y="351" text-anchor="middle" font-size="12" fill="#166534">해상도·DPI 좌표 보정 · 이미지 업로드</text>
+
+  <!-- 데이터 -->
+  <rect x="110" y="408" width="200" height="82" rx="10" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="210" y="430" text-anchor="middle" font-size="13" font-weight="700" fill="#475569">데이터 저장 (로컬)</text>
+  <text x="210" y="450" text-anchor="middle" font-size="11" fill="#64748b">JSON: library·presets·config</text>
+  <text x="210" y="466" text-anchor="middle" font-size="11" fill="#64748b">이미지: custom_icons·wallpapers</text>
+
+  <!-- 오버레이 엔진 -->
+  <rect x="350" y="408" width="200" height="82" rx="10" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.5"/>
+  <text x="450" y="430" text-anchor="middle" font-size="13" font-weight="700" fill="#6d28d9">오버레이 엔진</text>
+  <text x="450" y="450" text-anchor="middle" font-size="11" fill="#5b21b6">PySide6 · Qt  ·  IPC :19876</text>
+  <text x="450" y="466" text-anchor="middle" font-size="11" fill="#5b21b6">아이콘 렌더 · 클릭→실행</text>
+
+  <!-- Windows -->
+  <rect x="110" y="528" width="440" height="78" rx="10" fill="#1e293b" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="330" y="554" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">Windows 바탕화면</text>
+  <text x="330" y="578" text-anchor="middle" font-size="12" fill="#cbd5e1">배경화면 변경 · 기본아이콘 숨김 · 프로그램 실행</text>
+
+  <!-- Arrows (local) -->
+  <line x1="330" y1="160" x2="330" y2="182" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="330" y1="244" x2="330" y2="286" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="340" y="270" font-size="11" fill="#64748b">로컬 HTTP API 호출</text>
+
+  <line x1="260" y1="370" x2="220" y2="406" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="150" y="392" font-size="11" fill="#64748b">읽기/쓰기</text>
+  <line x1="410" y1="370" x2="450" y2="406" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="430" y="392" font-size="11" fill="#64748b">실행/재로드</text>
+
+  <line x1="310" y1="449" x2="348" y2="449" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <line x1="450" y1="490" x2="450" y2="526" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- FastAPI -> Windows (직접: 배경/아이콘숨김) 좌측 우회 -->
+  <polyline points="110,340 74,340 74,566 108,566" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="66" y="460" font-size="11" fill="#64748b" transform="rotate(-90 66 460)">배경화면·기본아이콘 적용</text>
+
+  <!-- 클라우드 (예정) -->
+  <rect x="690" y="188" width="258" height="120" rx="12" fill="#fff7ed" stroke="#f59e0b" stroke-width="1.6" stroke-dasharray="7 5"/>
+  <text x="819" y="214" text-anchor="middle" font-size="14" font-weight="700" fill="#c2410c">클라우드 API (예정)</text>
+  <text x="819" y="240" text-anchor="middle" font-size="12" fill="#9a3412">회원가입 · 프리셋 마켓</text>
+  <text x="819" y="260" text-anchor="middle" font-size="12" fill="#9a3412">업로드/다운로드 · 좋아요/북마크</text>
+  <text x="819" y="288" text-anchor="middle" font-size="11" fill="#b45309">사용자 라이브러리 동기화</text>
+
+  <!-- Frontend <-> Cloud (dashed, 예정) -->
+  <line x1="520" y1="210" x2="690" y2="238" stroke="#c2410c" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrowO)" marker-start="url(#arrowStart)"/>
+  <text x="600" y="200" text-anchor="middle" font-size="11" fill="#c2410c">회원·마켓 (예정)</text>
+
+  <!-- Note -->
+  <text x="30" y="656" font-size="12" fill="#475569">※ 로컬 엔진(FastAPI+오버레이)은 사용자 PC에 상주(영구). 클라우드는 계정·마켓 전용으로 분리되며, 바탕화면을 직접 변경하지 않음.</text>
+</svg>

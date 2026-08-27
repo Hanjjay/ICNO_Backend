@@ -18,6 +18,7 @@ import uuid
 import ctypes
 import psutil
 from pathlib import Path
+from typing import Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -106,10 +107,12 @@ SIG_REPOSITION    = ENGINE_DIR / ".sig_reposition"   # 위치만 업데이트 �
 SETTINGS_PATH    = ENGINE_DIR / "settings.json"
 
 DEFAULT_SETTINGS = {
-    "mode":         "free",   # "free" | "grid"
-    "grid_cell_w":  110,      # 격자 셀 너비 (px)
-    "grid_cell_h":  130,      # 격자 셀 높이 (px)
-    "grid_cols":    0,        # 0 = 자동 계산
+    "mode":             "free",   # "free" | "grid"
+    "grid_cell_w":      110,      # 격자 셀 너비 (px)
+    "grid_cell_h":      130,      # 격자 셀 높이 (px)
+    "grid_cols":        0,        # 0 = 자동 계산
+    "overlay_autostart": False,   # 앱 시작 시 오버레이 자동 시작
+    "restore_on_exit":   True,    # 앱 종료 시 기본 데스크톱 아이콘 복원
 }
 
 def load_settings() -> dict:
@@ -132,6 +135,7 @@ DESKTOP_ICONS_CACHE.mkdir(exist_ok=True)
 
 # ── 신규 저장소 (Phase A/B/B2/C) ─────────────────────────────────────────
 LIBRARY_PATH   = ENGINE_DIR / "library.json"    # 보관함 아이콘 메타데이터
+WALLPAPER_LIBRARY_PATH = ENGINE_DIR / "wallpaper_library.json"  # 보관함 배경화면 메타데이터
 PRESETS_PATH   = ENGINE_DIR / "presets.json"    # 프리셋(배치/매핑 참조) - 로컬 저장
 WALLPAPERS_DIR = ENGINE_DIR / "wallpapers"      # 업로드된 배경화면 원본
 BACKUP_DIR     = ENGINE_DIR / ".backup"         # apply-local 롤백용 백업
@@ -168,6 +172,15 @@ def load_library() -> list:
 
 def save_library(assets: list):
     _save_json(LIBRARY_PATH, assets)
+
+
+def load_wallpaper_library() -> list:
+    data = _load_json(WALLPAPER_LIBRARY_PATH, list)
+    return data if isinstance(data, list) else []
+
+
+def save_wallpaper_library(assets: list):
+    _save_json(WALLPAPER_LIBRARY_PATH, assets)
 
 
 def load_presets() -> list:
@@ -283,6 +296,55 @@ def _adopt_orphan_icons() -> list:
         changed = True
     if changed:
         save_library(library)
+    return library
+
+
+def _adopt_orphan_wallpapers() -> list:
+    """wallpapers 폴더에 있으나 wallpaper_library.json에 없는 파일을 흡수.
+    (프리셋에 딸려 저장됐거나 이전 버전에서 업로드된 배경을 보관함에 노출)
+    _adopt_orphan_icons 와 동일한 sha256 안정화 로직 사용."""
+    library = load_wallpaper_library()
+    known = {a.get("storage_filename") for a in library}
+    sha_map = {a.get("sha256"): a for a in library if a.get("sha256")}
+    changed = False
+    for f in sorted(WALLPAPERS_DIR.glob("*")):
+        if f.suffix.lower() not in ['.png', '.jpg', '.jpeg', '.gif']:
+            continue
+        if f.name in known:
+            continue
+        try:
+            sha = _sha256_bytes(f.read_bytes())
+        except Exception:
+            sha = ""
+
+        existing = sha_map.get(sha) if sha else None
+        if existing:
+            old_name = existing.get("storage_filename", "")
+            if not (WALLPAPERS_DIR / old_name).exists():
+                existing["storage_filename"] = f.name
+                existing["local_image_path"] = str(f)
+                existing["updated_at"] = _now_iso()
+                known.add(f.name)
+                changed = True
+            continue
+
+        entry = {
+            "asset_id":         str(uuid.uuid4()),
+            "display_name":     f.stem,
+            "storage_filename": f.name,
+            "local_image_path": str(f),
+            "origin":           "local-engine",
+            "sha256":           sha,
+            "created_at":       _now_iso(),
+            "updated_at":       _now_iso(),
+        }
+        library.append(entry)
+        known.add(f.name)
+        if sha:
+            sha_map[sha] = entry
+        changed = True
+    if changed:
+        save_wallpaper_library(library)
     return library
 
 # Windows subprocess 플래그
@@ -959,15 +1021,18 @@ async def get_settings():
     return load_settings()
 
 class SettingsModel(BaseModel):
-    mode:        str = "free"
-    grid_cell_w: int = 110
-    grid_cell_h: int = 130
-    grid_cols:   int = 0
+    # 모두 Optional → 보낸 필드만 부분 업데이트(grid 저장이 오버레이 설정을 덮지 않도록)
+    mode:              Optional[str]  = None
+    grid_cell_w:       Optional[int]  = None
+    grid_cell_h:       Optional[int]  = None
+    grid_cols:         Optional[int]  = None
+    overlay_autostart: Optional[bool] = None
+    restore_on_exit:   Optional[bool] = None
 
 @app.post("/api/settings")
 async def update_settings(s: SettingsModel):
     settings = load_settings()
-    settings.update(s.dict())
+    settings.update(s.dict(exclude_unset=True, exclude_none=True))  # 보낸 값만 반영
     save_settings(settings)
     return {"success": True, "settings": settings}
 
@@ -1105,6 +1170,81 @@ async def pick_file_dialog():
     file_path = result_q.get() if not result_q.empty() else ""
     name = Path(file_path).stem if file_path else ""
     return {"file_path": file_path, "name": name}
+
+
+@app.get("/api/icons/pick-folder")
+async def pick_folder_dialog():
+    """Windows 네이티브 폴더 선택 대화상자(SHBrowseForFolderW) - 폴더 절대경로 반환.
+    아이콘 대상으로 '폴더'를 지정할 때 사용(클릭 시 탐색기로 폴더 열림)."""
+    import threading, queue
+    result_q = queue.Queue()
+
+    def _show_dialog():
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class BROWSEINFO(ctypes.Structure):
+                _fields_ = [
+                    ("hwndOwner", wintypes.HWND),
+                    ("pidlRoot", ctypes.c_void_p),
+                    ("pszDisplayName", wintypes.LPWSTR),
+                    ("lpszTitle", wintypes.LPCWSTR),
+                    ("ulFlags", wintypes.UINT),
+                    ("lpfn", ctypes.c_void_p),
+                    ("lParam", wintypes.LPARAM),
+                    ("iImage", ctypes.c_int),
+                ]
+
+            shell32 = ctypes.windll.shell32
+            ole32   = ctypes.windll.ole32
+            try:
+                ole32.OleInitialize(None)   # BIF_NEWDIALOGSTYLE 요구사항
+            except Exception:
+                pass
+
+            shell32.SHBrowseForFolderW.restype  = ctypes.c_void_p
+            shell32.SHBrowseForFolderW.argtypes = [ctypes.c_void_p]
+            shell32.SHGetPathFromIDListW.argtypes = [ctypes.c_void_p, wintypes.LPWSTR]
+
+            display = ctypes.create_unicode_buffer(260)
+            bi = BROWSEINFO()
+            try:
+                bi.hwndOwner = ctypes.windll.user32.GetForegroundWindow()
+            except Exception:
+                bi.hwndOwner = 0
+            bi.pidlRoot = None
+            bi.pszDisplayName = ctypes.cast(display, wintypes.LPWSTR)
+            bi.lpszTitle = "폴더 선택"
+            # BIF_RETURNONLYFSDIRS(0x1) | BIF_NEWDIALOGSTYLE(0x40)
+            bi.ulFlags = 0x0001 | 0x0040
+
+            pidl = shell32.SHBrowseForFolderW(ctypes.byref(bi))
+            path = ""
+            if pidl:
+                path_buf = ctypes.create_unicode_buffer(1024)
+                if shell32.SHGetPathFromIDListW(pidl, path_buf):
+                    path = path_buf.value
+                try:
+                    ole32.CoTaskMemFree(pidl)
+                except Exception:
+                    pass
+            try:
+                ole32.OleUninitialize()
+            except Exception:
+                pass
+            result_q.put(path)
+        except Exception as e:
+            print(f"폴더 선택 오류: {e}")
+            result_q.put("")
+
+    t = threading.Thread(target=_show_dialog)
+    t.start()
+    t.join(timeout=120)
+
+    folder_path = result_q.get() if not result_q.empty() else ""
+    name = Path(folder_path).name if folder_path else ""
+    return {"file_path": folder_path, "name": name}
 
 
 @app.post("/api/icons/reload-overlay")
@@ -1769,7 +1909,11 @@ async def get_display_info():
 
 @app.post("/api/wallpaper/upload")
 async def upload_wallpaper(file: UploadFile = File(...)):
-    """배경화면 파일 업로드 → 엔진 로컬 절대경로 반환."""
+    """배경화면 파일 업로드 → 엔진 로컬 저장 + 보관함(wallpaper_library.json) 기록.
+
+    아이콘 업로드와 동일하게 sha256 중복 방지 + asset_id 발급을 수행한다.
+    응답에 asset_id/storage_filename/display_name 을 추가하고, 기존 필드
+    (success/wallpaper_path/url)는 하위호환을 위해 유지한다."""
     # 허용: PNG, JPG/JPEG, GIF (WEBP/BMP/SVG 차단 — 공격면 축소, 아이콘 업로드와 통일)
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ['.png', '.jpg', '.jpeg', '.gif']:
@@ -1778,6 +1922,21 @@ async def upload_wallpaper(file: UploadFile = File(...)):
     if len(content) > MAX_WALLPAPER_BYTES:
         raise HTTPException(status_code=400, detail="파일이 너무 큽니다 (최대 40MB)")
     _validate_image_bytes(content, {"PNG", "JPEG", "GIF"})
+    sha = _sha256_bytes(content)
+
+    # ── 중복 방지: 동일 sha256 이 이미 보관함에 있으면 재저장 없이 반환 ──
+    library = _adopt_orphan_wallpapers()
+    for a in library:
+        if a.get("sha256") == sha and (WALLPAPERS_DIR / a.get("storage_filename", "")).exists():
+            return {
+                "success": True,
+                "duplicate": True,
+                "asset_id": a.get("asset_id"),
+                "storage_filename": a.get("storage_filename"),
+                "wallpaper_path": a.get("local_image_path"),          # 하위호환
+                "display_name": a.get("display_name"),
+                "url": f"/wallpapers/{a.get('storage_filename')}",
+            }
 
     is_gif = (ext == '.gif')
     unique = f"{uuid.uuid4().hex}{'.gif' if is_gif else '.png'}"
@@ -1785,16 +1944,120 @@ async def upload_wallpaper(file: UploadFile = File(...)):
     if not _is_within(WALLPAPERS_DIR, save_path):
         raise HTTPException(status_code=400, detail="잘못된 저장 경로")
 
+    width = height = None
     if is_gif:
         # GIF는 원본 유지 (애니메이션 배경)
         with open(save_path, 'wb') as f:
             f.write(content)
+        try:
+            with Image.open(save_path) as im:
+                width, height = im.size
+        except Exception:
+            pass
     else:
         # JPG/PNG → PNG로 재인코딩 (메타데이터/페이로드 제거). 배경은 원본 해상도 유지.
         img = Image.open(BytesIO(content)).convert('RGB')
+        width, height = img.size
         img.save(save_path, 'PNG')
 
-    return {"success": True, "wallpaper_path": str(save_path), "url": f"/wallpapers/{unique}"}
+    asset_id = str(uuid.uuid4())
+    display_name = Path(file.filename or "").stem or "배경화면"
+    entry = {
+        "asset_id":         asset_id,
+        "display_name":     display_name,
+        "storage_filename": unique,
+        "local_image_path": str(save_path),
+        "origin":           "user-upload",
+        "sha256":           sha,
+        "width":            width,
+        "height":           height,
+        "created_at":       _now_iso(),
+        "updated_at":       _now_iso(),
+    }
+    library.append(entry)
+    save_wallpaper_library(library)
+
+    return {
+        "success": True,
+        "duplicate": False,
+        "asset_id": asset_id,
+        "storage_filename": unique,
+        "wallpaper_path": str(save_path),          # 하위호환
+        "display_name": display_name,
+        "url": f"/wallpapers/{unique}",
+    }
+
+
+# ── 배경화면 보관함 (wallpaper_library.json) ─────────────────────────────────
+@app.get("/api/wallpapers/library")
+async def get_wallpaper_library():
+    """보관함 배경화면 목록. 실제 파일 존재 여부(file_exists)를 함께 반환.
+    wallpapers 폴더의 미등록 파일은 asset_id를 부여해 흡수한다."""
+    library = _adopt_orphan_wallpapers()
+    for a in library:
+        sf = a.get("storage_filename", "")
+        a["file_exists"] = (WALLPAPERS_DIR / sf).exists()
+        a["url"] = f"/wallpapers/{sf}" if sf else ""   # 프론트 썸네일용 (정적 마운트)
+    return {"assets": library}
+
+
+@app.patch("/api/wallpapers/library/{asset_id}")
+async def update_wallpaper_asset(asset_id: str, data: LibraryPatchModel):
+    """표시 이름(display_name)만 변경. 파일명/경로는 불변."""
+    library = load_wallpaper_library()
+    found = False
+    for a in library:
+        if a.get("asset_id") == asset_id:
+            a["display_name"] = data.display_name
+            a["updated_at"] = _now_iso()
+            found = True
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="보관함 배경화면을 찾을 수 없음")
+    save_wallpaper_library(library)
+    return {"success": True, "asset_id": asset_id, "display_name": data.display_name}
+
+
+@app.delete("/api/wallpapers/library/{asset_id}")
+async def delete_wallpaper_asset(asset_id: str, force: bool = False):
+    """보관함 배경화면 삭제. 프리셋이 참조 중이면 409. force=true 로 강제 삭제.
+    동일 파일(sha256/파일명)을 공유하는 다른 항목이 없을 때만 실제 파일을 지운다."""
+    library = load_wallpaper_library()
+    asset = next((a for a in library if a.get("asset_id") == asset_id), None)
+    if not asset:
+        raise HTTPException(status_code=404, detail="보관함 배경화면을 찾을 수 없음")
+
+    storage = asset.get("storage_filename", "")
+    local_path = asset.get("local_image_path", "")
+    # 이 배경을 쓰는 프리셋 조사 (wallpaper_path 로 참조)
+    preset_refs = [
+        p.get("id") for p in load_presets()
+        if p.get("wallpaper_path") and (
+            os.path.basename(p.get("wallpaper_path", "")) == storage
+            or p.get("wallpaper_path") == local_path
+        )
+    ]
+    if preset_refs and not force:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "Wallpaper is still in use", "references": {"presets": preset_refs}},
+        )
+
+    library = [a for a in library if a.get("asset_id") != asset_id]
+    still_shared = any(a.get("storage_filename") == storage for a in library)
+    save_wallpaper_library(library)
+
+    deleted_file = False
+    if not still_shared and storage:
+        try:
+            fp = WALLPAPERS_DIR / storage
+            if _is_within(WALLPAPERS_DIR, fp) and fp.exists():
+                fp.unlink()
+                deleted_file = True
+        except Exception as e:
+            print(f"⚠️ 배경 파일 삭제 실패: {e}")
+
+    return {"success": True, "deleted_file": deleted_file, "forced": bool(preset_refs and force)}
 
 
 class WallpaperApplyModel(BaseModel):

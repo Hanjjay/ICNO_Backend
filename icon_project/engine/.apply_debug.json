@@ -1,0 +1,45 @@
+{
+  "display_metrics": {
+    "physical": [
+      2560,
+      1440
+    ],
+    "logical": [
+      2048,
+      1152
+    ],
+    "dpi": 120,
+    "scale": 1.25
+  },
+  "canvas": [
+    1920,
+    1080
+  ],
+  "note": "coords are raw canvas; overlay maps to Qt screen",
+  "icons": [
+    {
+      "name": "027596df_KakaoTalk_20260402_163628664-removebg-preview",
+      "x": 617,
+      "y": 712,
+      "size": 89
+    },
+    {
+      "name": "a0d465bb_12-124270_squidward-tentacles-png-squidward-from-sp",
+      "x": 464,
+      "y": 585,
+      "size": 148
+    },
+    {
+      "name": "854b9caf_26-268960_scared-spongebob-png-image-download-spong",
+      "x": 1112,
+      "y": 631,
+      "size": 135
+    },
+    {
+      "name": "db021f46_dhofgr3-16d5e9cb-081a-48da-8f6a-dd6f0a8d8f87",
+      "x": 1260,
+      "y": 634,
+      "size": 152
+    }
+  ]
+}
