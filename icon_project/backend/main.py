@@ -1099,8 +1099,49 @@ async def get_overlay_status():
     return {"running": running}
 
 
+def _bring_dialog_to_front():
+    """방금 뜬 Windows 공통 대화상자(#32770)를 최상단·포그라운드로 끌어올린다.
+    백엔드가 백그라운드 프로세스라 대화상자가 브라우저 뒤에 열리는 문제(여러 번
+    클릭해야 보이는 현상)를 방지한다. 별도 스레드에서 잠깐 감시하며 실행."""
+    try:
+        import ctypes, time as _t
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        pid = kernel32.GetCurrentProcessId()
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        for _ in range(40):  # 최대 ~2초 동안 대화상자 등장 감시
+            _t.sleep(0.05)
+            target = []
+            def _cb(h, l):
+                wpid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(h, ctypes.byref(wpid))
+                if wpid.value == pid and user32.IsWindowVisible(h):
+                    cls = ctypes.create_unicode_buffer(64)
+                    user32.GetClassNameW(h, cls, 64)
+                    if cls.value == "#32770":   # 공통 대화상자 클래스
+                        target.append(h)
+                        return False
+                return True
+            user32.EnumWindows(WNDENUMPROC(_cb), 0)
+            if target:
+                hwnd = target[0]
+                try:
+                    user32.SystemParametersInfoW(0x2001, 0, 0, 0)  # 포그라운드 잠금 해제
+                except Exception:
+                    pass
+                SWP = 0x0001 | 0x0002 | 0x0040  # NOSIZE|NOMOVE|SHOWWINDOW
+                user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, SWP)  # HWND_TOPMOST
+                user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0, SWP)  # HWND_NOTOPMOST
+                user32.SetForegroundWindow(hwnd)
+                user32.BringWindowToTop(hwnd)
+                return
+    except Exception:
+        pass
+
+
 @app.get("/api/icons/pick-file")
-async def pick_file_dialog():
+def pick_file_dialog():
     """Windows 네이티브 파일 선택 대화상자(comdlg32 GetOpenFileNameW) - 절대경로 반환.
     Qt QFileDialog는 별도 스레드에서 불안정하므로 ctypes 네이티브 API 사용."""
     import threading, queue
@@ -1157,6 +1198,7 @@ async def pick_file_dialog():
             # OFN_FILEMUSTEXIST(0x1000)|OFN_HIDEREADONLY(0x4)|OFN_EXPLORER(0x80000)|OFN_NOCHANGEDIR(0x8)
             ofn.Flags = 0x1000 | 0x4 | 0x80000 | 0x8
 
+            threading.Thread(target=_bring_dialog_to_front, daemon=True).start()
             ok = ctypes.windll.comdlg32.GetOpenFileNameW(ctypes.byref(ofn))
             result_q.put(buf.value if ok else "")
         except Exception as e:
@@ -1173,7 +1215,7 @@ async def pick_file_dialog():
 
 
 @app.get("/api/icons/pick-folder")
-async def pick_folder_dialog():
+def pick_folder_dialog():
     """Windows 네이티브 폴더 선택 대화상자(SHBrowseForFolderW) - 폴더 절대경로 반환.
     아이콘 대상으로 '폴더'를 지정할 때 사용(클릭 시 탐색기로 폴더 열림)."""
     import threading, queue
@@ -1219,6 +1261,7 @@ async def pick_folder_dialog():
             # BIF_RETURNONLYFSDIRS(0x1) | BIF_NEWDIALOGSTYLE(0x40)
             bi.ulFlags = 0x0001 | 0x0040
 
+            threading.Thread(target=_bring_dialog_to_front, daemon=True).start()
             pidl = shell32.SHBrowseForFolderW(ctypes.byref(bi))
             path = ""
             if pidl:
