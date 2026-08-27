@@ -6,67 +6,51 @@
   "device_pixel_ratio": 1.25,
   "icons": [
     {
-      "name": "027596df_KakaoTalk_20260402_163628664-removebg-preview",
+      "name": "26-268960_scared-spongebob-png-image-download-spongebob-squarepants-in",
       "config_xy": [
-        617,
-        712
+        488,
+        601
       ],
-      "config_size": 89,
+      "config_size": 193,
       "actual_pos": [
-        658,
-        759
+        521,
+        641
       ],
       "actual_wh": [
-        95,
-        97
+        206,
+        186
       ]
     },
     {
-      "name": "a0d465bb_12-124270_squidward-tentacles-png-squidward-from-sp",
+      "name": "3bad2c78_source",
       "config_xy": [
-        464,
-        585
+        1144,
+        547
       ],
-      "config_size": 148,
+      "config_size": 223,
       "actual_pos": [
-        495,
-        624
+        1220,
+        583
       ],
       "actual_wh": [
-        158,
-        222
+        238,
+        263
       ]
     },
     {
-      "name": "854b9caf_26-268960_scared-spongebob-png-image-download-spong",
+      "name": "2e464d17_syberian-hamster",
       "config_xy": [
-        1112,
-        631
+        851,
+        162
       ],
-      "config_size": 135,
+      "config_size": 117,
       "actual_pos": [
-        1186,
-        673
+        908,
+        173
       ],
       "actual_wh": [
-        144,
-        180
-      ]
-    },
-    {
-      "name": "db021f46_dhofgr3-16d5e9cb-081a-48da-8f6a-dd6f0a8d8f87",
-      "config_xy": [
-        1260,
-        634
-      ],
-      "config_size": 152,
-      "actual_pos": [
-        1344,
-        676
-      ],
-      "actual_wh": [
-        162,
-        193
+        125,
+        127
       ]
     }
   ]

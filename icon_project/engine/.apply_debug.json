@@ -18,28 +18,22 @@
   "note": "coords are raw canvas; overlay maps to Qt screen",
   "icons": [
     {
-      "name": "027596df_KakaoTalk_20260402_163628664-removebg-preview",
-      "x": 617,
-      "y": 712,
-      "size": 89
+      "name": "26-268960_scared-spongebob-png-image-download-spongebob-squarepants-in",
+      "x": 488,
+      "y": 601,
+      "size": 193
     },
     {
-      "name": "a0d465bb_12-124270_squidward-tentacles-png-squidward-from-sp",
-      "x": 464,
-      "y": 585,
-      "size": 148
+      "name": "3bad2c78_source",
+      "x": 1144,
+      "y": 547,
+      "size": 223
     },
     {
-      "name": "854b9caf_26-268960_scared-spongebob-png-image-download-spong",
-      "x": 1112,
-      "y": 631,
-      "size": 135
-    },
-    {
-      "name": "db021f46_dhofgr3-16d5e9cb-081a-48da-8f6a-dd6f0a8d8f87",
-      "x": 1260,
-      "y": 634,
-      "size": 152
+      "name": "2e464d17_syberian-hamster",
+      "x": 851,
+      "y": 162,
+      "size": 117
     }
   ]
 }
