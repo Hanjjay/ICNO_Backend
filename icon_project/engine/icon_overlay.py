@@ -312,6 +312,7 @@ class CustomIcon(QWidget):
 
         self._load_image()
         self._calc_size()
+        self._load_interaction_assets(icon_data)
 
         mx, my = _canvas_to_screen(icon_data['x'], icon_data['y'],
                                    self._cw, self._ch, self._sw, self._sh)
@@ -355,6 +356,74 @@ class CustomIcon(QWidget):
             self.img_label.setFixedSize(px.width(), px.height())
             self.img_label.setPixmap(px)
             self.img_w, self.img_h = px.width(), px.height()
+            self._normal_pixmap = px
+
+    def _load_interaction_assets(self, icon_data):
+        """Hover/Click 보조 이미지 로드. 정적 image_path 아이콘에만 적용
+        (image_path 자체가 GIF인 경우엔 기존 자동재생 GIF 표시를 그대로 둔다)."""
+        self._hover          = False
+        self._click_active   = False
+        self._hover_pixmap   = None
+        self._hover_movie    = None
+        self._click_pixmap   = None
+
+        if self.gif_frames:
+            return  # 기존 자동재생 GIF(원본 image_path)와는 상태를 섞지 않음
+
+        hover_path = icon_data.get('hover_image_path', '')
+        if hover_path and os.path.exists(hover_path):
+            if hover_path.lower().endswith('.gif'):
+                movie = QMovie(hover_path)
+                movie.setScaledSize(QSize(self.img_w, self.img_h))
+                self._hover_movie = movie
+            else:
+                raw = QPixmap(hover_path)
+                if not raw.isNull():
+                    self._hover_pixmap = raw.scaled(
+                        self.img_w, self.img_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+        click_path = icon_data.get('click_image_path', '')
+        if click_path and os.path.exists(click_path):
+            raw = QPixmap(click_path)
+            if not raw.isNull():
+                self._click_pixmap = raw.scaled(
+                    self.img_w, self.img_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+    def _refresh_visual(self):
+        """상태 우선순위: CLICK > HOVER > NORMAL. 기존 자동재생 GIF 아이콘은 건드리지 않는다."""
+        if self.gif_frames:
+            return
+        if self._click_active and self._click_pixmap is not None:
+            if self._hover_movie is not None and self._hover_movie.state() != QMovie.NotRunning:
+                self._hover_movie.stop()
+            self.img_label.setMovie(None)
+            self.img_label.setPixmap(self._click_pixmap)
+        elif self._hover:
+            if self._hover_movie is not None:
+                if self.img_label.movie() is not self._hover_movie:
+                    self.img_label.setMovie(self._hover_movie)
+                if self._hover_movie.state() != QMovie.Running:
+                    self._hover_movie.start()
+            elif self._hover_pixmap is not None:
+                self.img_label.setMovie(None)
+                self.img_label.setPixmap(self._hover_pixmap)
+        else:
+            if self._hover_movie is not None and self._hover_movie.state() != QMovie.NotRunning:
+                self._hover_movie.stop()
+                self._hover_movie.jumpToFrame(0)
+            self.img_label.setMovie(None)
+            if getattr(self, "_normal_pixmap", None) is not None:
+                self.img_label.setPixmap(self._normal_pixmap)
+
+    def enterEvent(self, event):
+        self._hover = True
+        self._refresh_visual()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self._refresh_visual()
+        super().leaveEvent(event)
 
     def _start_gif(self):
         if self.gif_frames and not self._gif_active:
@@ -436,7 +505,11 @@ class CustomIcon(QWidget):
                 # 실제로 드래그한 경우 → 위치 저장
                 if self.parent(): self.parent().save_config()
             else:
-                # 움직임 없는 클릭 → 실행 (단일 클릭으로 실행)
+                # 진짜 클릭으로 확정된 경우에만 Toggle (click_image_path 있을 때만)
+                if self._click_pixmap is not None:
+                    self._click_active = not self._click_active
+                    self._refresh_visual()
+                # 움직임 없는 클릭 → 실행 (단일 클릭으로 실행, 기존 동작 유지)
                 self.execute_icon()
 
     def mouseDoubleClickEvent(self, e):
@@ -446,6 +519,8 @@ class CustomIcon(QWidget):
 
     def closeEvent(self, e):
         self._gif_active = False
+        if self._hover_movie is not None:
+            self._hover_movie.stop()
         super().closeEvent(e)
 
     def execute_icon(self):

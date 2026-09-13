@@ -604,6 +604,7 @@ class IconMapping(BaseModel):
     icon_name: str
     image_path: str
     hover_image_path: str = ""
+    click_image_path: str = ""
     target_path: str = ""
     x: int = 100
     y: int = 100
@@ -866,6 +867,7 @@ async def create_icon_mapping(mapping: IconMapping):
             'y':             mapping.y,
             'size':          mapping.size,
             'hover_image_path': mapping.hover_image_path,
+            'click_image_path': mapping.click_image_path,
             'show_name':     mapping.show_name,
             'font_family':   mapping.font_family,
             'font_size':     mapping.font_size,
@@ -897,6 +899,7 @@ class IconMappingUpdate(BaseModel):
     name:              str  = ""
     image_path:        str  = ""
     hover_image_path:  str  = ""
+    click_image_path:  str  = ""
     target_path:       str  = ""
     size:              int  = 80
     show_name:         bool = True
@@ -925,6 +928,7 @@ async def update_icon_mapping(icon_id: str, data: IconMappingUpdate):
                 if data.target_path:   m['target_path']   = data.target_path
                 m['size']          = data.size
                 m['hover_image_path'] = data.hover_image_path
+                m['click_image_path'] = data.click_image_path
                 m['show_name']     = data.show_name
                 m['font_family']   = data.font_family
                 m['font_size']     = data.font_size
@@ -2191,6 +2195,7 @@ async def apply_preset_local(preset_id: str):
                 "canvas_w":         int(cw),
                 "canvas_h":         int(ch),
                 "hover_image_path": ic.get("hover_image_path", ""),
+                "click_image_path": ic.get("click_image_path", ""),
                 "show_name":        ic.get("show_name", True),
                 "font_family":      ic.get("font_family", "맑은 고딕"),
                 "font_size":        ic.get("font_size", 10),
